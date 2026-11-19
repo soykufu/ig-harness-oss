@@ -23,6 +23,7 @@ import type {
 export const MAX_RICH_MESSAGE_BLOCKS = 10;
 export type MessageLifecycle = {
   before(payload: { recipient?: { id?: string; comment_id?: string }; message?: unknown }): Promise<string>;
+  beforeFetch?(ticket: string): Promise<void>;
   acknowledged(ticket: string, response: unknown): Promise<void>;
   uncertain(ticket: string): Promise<void>;
 };
@@ -103,7 +104,7 @@ export class InstagramClient {
     if (!lifecycle) return this.requestTransport<T>(method, path, body);
     const ticket = await lifecycle.before(payload!);
     try {
-      const response = await this.requestTransport<T>(method, path, body);
+      const response = await this.requestTransport<T>(method, path, body, () => lifecycle.beforeFetch?.(ticket));
       await lifecycle.acknowledged(ticket, response);
       return response;
     } catch (error) {
@@ -118,6 +119,7 @@ export class InstagramClient {
     method: string,
     path: string,
     body?: unknown,
+    beforeFetch?: () => Promise<void> | undefined,
   ): Promise<T> {
     await this.beforeRequest?.();
     if (method === 'POST' && path.endsWith('/messages') && this.transformMessage && body && typeof body === 'object') {
@@ -130,15 +132,19 @@ export class InstagramClient {
     if (this.appSecret) {
       const url = new URL(requestUrl); url.searchParams.set('appsecret_proof', await createAppSecretProof(this.accessToken,this.appSecret)); requestUrl = url.href;
     }
+    const serializedBody = body !== undefined ? JSON.stringify(body) : undefined;
     const observe = async (value: GraphObservation) => { try { await this.onResponse?.(value); } catch { /* observability must not turn a successful send into an error */ } };
     for (let attempt = 0; ; attempt++) {
+      // All asynchronous transformation/signing work and serialization has
+      // finished. A rejected final admission must never reach fetch.
+      await beforeFetch?.();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
       let error: InstagramApiError | InstagramTransportError;
       try {
         const res = await fetch(requestUrl, {
           method, headers, signal: controller.signal,
-          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+          ...(serializedBody !== undefined ? { body: serializedBody } : {}),
         });
         const usage = parseGraphUsage(res.headers);
         let value: unknown;

@@ -1,5 +1,6 @@
 import type { MessageLifecycle } from '@ig-harness/ig-sdk';
-import { reserveRecruitmentOutbound, acknowledgeRecruitmentOutbound, markRecruitmentOutboundUncertain } from './recruitment-outbound-ledger.js';
+import { reserveRecruitmentOutbound, acknowledgeRecruitmentOutbound, markRecruitmentOutboundUncertain, assertRecruitmentReservationReady } from './recruitment-outbound-ledger.js';
+import { messagingEligibility } from './messaging-window.js';
 
 /** Each client belongs to ONE durable operation. Rich blocks get distinct
  * slots; a recreated client starts at slot 0, which cannot be replayed.
@@ -28,6 +29,20 @@ export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
         expectedRecipient = payload.recipient?.id;
         return key;
       } catch (error) { failed = true; inFlight = false; throw error; }
+    },
+    async beforeFetch(ticket) {
+      await guard();
+      const nowMs = now();
+      const hour = new Date(nowMs + 9 * 3_600_000).getUTCHours();
+      if (hour < 8 || hour >= 21) throw new Error('Outside recruitment delivery window');
+      if (!inFlight || failed || !operation) throw new Error('Recruitment operation is unavailable');
+      await assertRecruitmentReservationReady(db, {accountId,operationKey:ticket,ownerEpoch:operation.ownerEpoch,nowMs});
+      // Ordinary DMs cannot gain a 24h window from an outgoing/manual echo.
+      // Private replies use comment IDs and keep their separate policy path.
+      if (expectedRecipient) {
+        const follower = await db.prepare('SELECT id FROM followers WHERE account_id=? AND igsid=?').bind(accountId,expectedRecipient).first<{id:number}>();
+        if (!follower || await messagingEligibility(db,follower.id,accountId,nowMs)!=='eligible') throw new Error('Recruitment recipient is not eligible');
+      }
     },
     async acknowledged(ticket, response) {
       const result = response as { message_id?: unknown; recipient_id?: unknown } | null;

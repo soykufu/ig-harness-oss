@@ -69,6 +69,36 @@ export async function markRecruitmentOutboundUncertain(db: D1Database, accountId
     WHERE account_id=? AND operation_key=? AND state='reserved'`).bind(accountId, operationKey).run();
 }
 
+/** Final read immediately before the network call. Revalidate an existing
+ * reservation; never create a new key or refresh an attestation here.
+ */
+export async function assertRecruitmentReservationReady(db: D1Database, input: {
+  accountId: string; operationKey: string; ownerEpoch: string; nowMs: number;
+}): Promise<void> {
+  const { accountId, operationKey, ownerEpoch, nowMs } = input;
+  identity(accountId); identity(operationKey); identity(ownerEpoch); time(nowMs);
+  const row = await db.prepare(`SELECT 1 AS ready
+    FROM recruitment_outbound_operations o
+    JOIN recruitment_outbound_control c ON c.account_id=o.account_id
+    JOIN ig_accounts a ON a.id=o.account_id AND a.is_active=1
+    WHERE o.account_id=? AND o.operation_key=? AND o.owner_epoch=? AND o.state='reserved'
+      AND o.reserved_at_ms>? AND o.reserved_at_ms<=?
+      AND c.owner='harness' AND c.owner_epoch=? AND c.reconciled_at_ms BETWEEN ? AND ?
+      AND EXISTS (SELECT 1 FROM integration_settings WHERE key='outbound_paused' AND value='0')
+      AND NOT EXISTS (SELECT 1 FROM data_deletion_locks WHERE account_id=o.account_id)
+      AND NOT EXISTS (SELECT 1 FROM recruitment_outbound_operations x WHERE x.account_id=o.account_id
+        AND (x.state='uncertain' OR x.reserved_at_ms>? OR (x.state='reserved' AND x.reserved_at_ms<=?)))
+      AND NOT EXISTS (SELECT 1 FROM recruitment_outbound_observations e WHERE e.account_id=o.account_id AND e.sent_at_ms>?)
+      AND ((SELECT COUNT(*) FROM recruitment_outbound_operations x WHERE x.account_id=o.account_id
+        AND x.reserved_at_ms>? AND x.reserved_at_ms<=? AND NOT EXISTS
+          (SELECT 1 FROM recruitment_outbound_observations e WHERE e.account_id=x.account_id AND e.message_id=x.message_id))
+        + (SELECT COUNT(*) FROM recruitment_outbound_observations e WHERE e.account_id=o.account_id AND e.sent_at_ms>? AND e.sent_at_ms<=?))<=?
+    `).bind(accountId,operationKey,ownerEpoch,nowMs-FRESH_MS,nowMs,
+      ownerEpoch,Math.max(0,nowMs-FRESH_MS),nowMs,nowMs,nowMs-FRESH_MS,nowMs,
+      nowMs-HOUR_MS,nowMs,nowMs-HOUR_MS,nowMs,CAP).first();
+  if (!row) throw new Error('Recruitment reservation no longer eligible');
+}
+
 /** Store an authenticated API acknowledgement. If the echo arrived first its
  * actual timestamp wins. A message ID cannot acknowledge two operations.
  */
