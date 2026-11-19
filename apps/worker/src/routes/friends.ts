@@ -16,6 +16,8 @@ import type { Friend as DbFriend, Tag as DbTag, IgAccount } from '@ig-harness/db
 import { resolveAccount, getAccountClient } from '../lib/accounts.js';
 import type { Env } from '../index.js';
 import { claimRecruitmentManualIntent, finishRecruitmentManualIntent } from '../services/recruitment-manual-intent.js';
+import { readRecruitmentManualStatus } from '../services/recruitment-manual-status.js';
+import { requireRole } from '../middleware/role-guard.js';
 
 const friends = new Hono<Env>();
 
@@ -409,6 +411,30 @@ friends.get('/api/friends/:id/messages', async (c) => {
   } catch (err) {
     console.error('GET /api/friends/:id/messages error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// Reconcile a pending manual action without touching Meta or changing any lock.
+friends.get('/api/friends/:id/manual-delivery-status', requireRole('owner', 'admin'), async (c) => {
+  c.header('Cache-Control', 'no-store');
+  const nonce = c.req.header('Idempotency-Key') ?? '';
+  const followerId = Number(c.req.param('id'));
+  if (!/^[A-Za-z0-9_-]{16,100}$/.test(nonce) || !Number.isSafeInteger(followerId) || followerId < 1) {
+    return c.json({ success: false, error: '確認対象が正しくありません' }, 400);
+  }
+  try {
+    // resolveAccount may perform a lazy backfill. Reconciliation must have no
+    // database mutations or credential refresh, including on first access.
+    const accountId = c.req.query('account_id');
+    const account = accountId
+      ? await c.env.DB.prepare('SELECT id FROM ig_accounts WHERE id=?').bind(accountId).first<{id:string}>()
+      : await c.env.DB.prepare('SELECT id FROM ig_accounts WHERE is_default=1 LIMIT 1').first<{id:string}>();
+    if (!account) return c.json({ success: false, error: 'not found' }, 404);
+    const data = await readRecruitmentManualStatus(c.env.DB, account.id, followerId, nonce);
+    if (!data) return c.json({ success: false, error: '記録を確認できません。未送信とは判断できないため、再送せず照合してください。' }, 404);
+    return c.json({ success: true, data });
+  } catch {
+    return c.json({ success: false, error: '送信記録を取得できません。再送せず確認を保留してください。' }, 503);
   }
 });
 

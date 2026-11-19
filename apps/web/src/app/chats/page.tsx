@@ -148,6 +148,8 @@ function MessagePanel({ friendId, onBack }: {
 }) {
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [deliveryNotice, setDeliveryNotice] = useState('')
   const [messages, setMessages] = useState<MessageLog[]>([])
   const [loading, setLoading] = useState(true)
   const isComposingRef = useRef(false)
@@ -176,6 +178,7 @@ function MessagePanel({ friendId, onBack }: {
   }, [friendId])
 
   useEffect(() => {
+    setDeliveryNotice('')
     loadMessages()
     return () => { abortRef.current?.abort() }
   }, [loadMessages])
@@ -225,9 +228,37 @@ function MessagePanel({ friendId, onBack }: {
       }])
       setMessage('')
     } catch (err) {
-      alert('送信失敗: ' + (err instanceof Error ? err.message : String(err)))
+      setDeliveryNotice('送信結果を確認できません。再送せず「送信結果を確認」を押してください。' + (err instanceof Error ? ` ${err.message}` : ''))
     }
     finally { setSending(false); sendLockRef.current = false }
+  }
+
+  const checkDelivery = async () => {
+    if (sendLockRef.current) return
+    sendLockRef.current = true
+    setChecking(true)
+    try {
+      const storageKey = `ig-manual-intent:${friendId}`
+      const stored = sessionStorage.getItem(storageKey)
+      if (!stored) { setDeliveryNotice('この端末に確認待ちの送信はありません。'); return }
+      const pending = JSON.parse(stored) as { nonce: string; digest: string }
+      const result = await fetchApi<{success:boolean;data:{recordedSuccess:boolean;needsReview:boolean}}>(
+        `/api/friends/${friendId}/manual-delivery-status`,
+        { headers: { 'Idempotency-Key': pending.nonce }, cache: 'no-store' },
+      )
+      if (!result.success) throw new Error('記録を取得できませんでした。')
+      if (result.data.recordedSuccess) {
+        sessionStorage.removeItem(storageKey)
+        const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({text: message.trim()}))))).map(b => b.toString(16).padStart(2, '0')).join('')
+        if (digest === pending.digest) setMessage('')
+        await loadMessages()
+        setDeliveryNotice('送信APIの応答と処理完了の記録を確認しました。相手への到着・既読は未確認です。')
+      } else {
+        setDeliveryNotice('送信結果の照合が必要です。再送は行いません。記録がない場合も未送信とは判断できません。')
+      }
+    } catch (err) {
+      setDeliveryNotice('結果確認を保留しました。再送しないでください。' + (err instanceof Error ? ` ${err.message}` : ''))
+    } finally { setChecking(false); sendLockRef.current = false }
   }
 
   return (
@@ -268,7 +299,7 @@ function MessagePanel({ friendId, onBack }: {
 
       <div className="px-3 py-2 border-t border-kumo-line bg-kumo-base shrink-0">
         <div className="flex gap-2">
-          <input type="text" value={message}
+          <input type="text" value={message} disabled={sending || checking}
             onChange={(e) => setMessage(e.target.value)}
             onCompositionStart={() => { isComposingRef.current = true }}
             onCompositionEnd={() => { isComposingRef.current = false }}
@@ -278,12 +309,16 @@ function MessagePanel({ friendId, onBack }: {
             }}
             placeholder="メッセージを入力..."
             className="flex-1 border border-kumo-line rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500/30 focus:border-pink-500" />
-          <button onClick={handleSend} disabled={!message.trim() || sending}
+          <button onClick={handleSend} disabled={!message.trim() || sending || checking}
             className="px-3 py-1.5 rounded-lg text-white text-sm font-medium disabled:opacity-40"
             style={{ backgroundColor: '#E1306C' }}>
             {sending ? '...' : '送信'}
           </button>
         </div>
+        <button onClick={checkDelivery} disabled={sending || checking} className="mt-2 text-xs underline disabled:opacity-40">
+          {checking ? '記録を確認中…' : '送信結果を確認'}
+        </button>
+        {deliveryNotice && <p role="status" className="mt-1 text-xs text-kumo-subtle">{deliveryNotice}</p>}
       </div>
     </div>
   )
