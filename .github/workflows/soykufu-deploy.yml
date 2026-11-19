@@ -1,0 +1,39 @@
+name: SOY-KUFU deploy stopped Instagram admin
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/soykufu-deploy.yml']
+permissions:
+  contents: read
+concurrency:
+  group: soykufu-instagram-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node --test scripts/soykufu-recruitment-policy.test.mjs
+      - run: pnpm --filter @ig-harness/shared --filter @ig-harness/ig-sdk build
+      - run: pnpm --filter web build
+        env:
+          NEXT_PUBLIC_SAME_ORIGIN_API: '1'
+          NEXT_TELEMETRY_DISABLED: '1'
+      - name: Deploy and verify stopped installation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: node scripts/soykufu-deploy.mjs
