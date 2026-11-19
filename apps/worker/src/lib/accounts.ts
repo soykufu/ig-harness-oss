@@ -14,10 +14,11 @@ import {
 import type { Context } from 'hono';
 import type { IgAccountRef } from '../services/line-cross-link.js';
 import { refreshAccountTokenIfNeeded } from './ig-token.js';
-import { decorateWithPresence } from '../services/human-touch.js';
+import { decorateWithPresence, assertOutboundAllowed, OutboundPausedError } from '../services/human-touch.js';
 import type { Env } from '../index.js';
 
 export type AccountEnv = CredentialEnv & {
+  OUTBOUND_PREPARATION_LOCK?: string;
   IG_USER_ID: string;
   IG_USERNAME?: string;
   IG_ACCESS_TOKEN: string;
@@ -220,5 +221,8 @@ export async function getAccountClient(
       await observe(observation);
     },
   });
-  return decorateWithPresence(db, client);
+  return decorateWithPresence(db, client, async () => {
+    if (env.OUTBOUND_PREPARATION_LOCK === '1') throw new OutboundPausedError();
+    await assertOutboundAllowed(db);
+  });
 }

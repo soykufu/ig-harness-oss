@@ -60,6 +60,7 @@ export type Env = {
     // so callers MUST guard `env.ASSETS` before invoking `.fetch` (see notFound below).
     ASSETS?: Fetcher;
     TOKEN_ENCRYPTION_KEY?: string;
+    OUTBOUND_PREPARATION_LOCK?: string;
     TRACKING_SIGNING_SECRET?: string;
     TRACKING_ALLOW_UNSIGNED_ACTIONS?: string;
     IG_LINK_TOKEN_SECRET?: string;

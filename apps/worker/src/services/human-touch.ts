@@ -110,7 +110,7 @@ export async function sendWithPresence<T>(
  * getAccountClient の返値を包む。recipient が igsid でない private reply
  * （comment_id 宛）は sender_action を送れないためスキップする。
  */
-export function decorateWithPresence(db: D1Database, client: InstagramClient): InstagramClient {
+export function decorateWithPresence(db: D1Database, client: InstagramClient, guard?: () => Promise<void>): InstagramClient {
   type SendFn = (...args: any[]) => Promise<unknown>;
   // sendRichMessage dispatches to this.sendText/sendImage/sendGenericTemplate.
   // While it runs, suspend the inner presence sequences so one rich message
@@ -121,6 +121,9 @@ export function decorateWithPresence(db: D1Database, client: InstagramClient): I
     if (typeof method !== 'function') return;
     const original = (method as unknown as SendFn).bind(client);
     (client as unknown as Record<string, unknown>)[name] = async (...args: unknown[]) => {
+      // Check before presence actions too: a blocked delivery must not mark a
+      // conversation as read or show typing before throwing.
+      await guard?.();
       const recipientId = typeof args[0] === 'string' ? args[0] : '';
       if (name === 'sendRichMessage') {
         suspended = true;
@@ -140,6 +143,7 @@ export function decorateWithPresence(db: D1Database, client: InstagramClient): I
   wrap('sendGenericTemplate', null);
   wrap('sendQuickReply', 1);
   wrap('sendRichMessage', null);
+  wrap('sendPrivateReply', null);
   return client;
 }
 

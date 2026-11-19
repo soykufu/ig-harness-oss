@@ -63,18 +63,26 @@ try {
     assets: { directory: '../web/out', binding: 'ASSETS', run_worker_first: true },
     d1_databases: [{ binding: 'DB', database_name: name, database_id: database }],
     r2_buckets: [{ binding: 'IMAGES', bucket_name: name }],
-    vars: { WORKER_URL: workerUrl, ADMIN_ORIGIN: workerUrl, MESSAGES_RETENTION_DAYS: '0' },
+    vars: { WORKER_URL: workerUrl, ADMIN_ORIGIN: workerUrl, MESSAGES_RETENTION_DAYS: '0', OUTBOUND_PREPARATION_LOCK: '1' },
     observability: { enabled: true },
   }), { mode: 0o600 });
   wrangler(['deploy','--keep-vars','--config',configName]);
   wrangler(['secret','bulk','--config',configName], JSON.stringify(secrets));
-  const ui = await fetch(`${workerUrl}/login/`, { signal: AbortSignal.timeout(20000) });
-  if (!ui.ok || !(ui.headers.get('content-type') ?? '').includes('text/html')) throw new Error('Login page verification failed');
+  // Read-only readiness checks may need to wait for a newly deployed version.
+  // Never replay deployment or secret mutations merely because an edge is late.
+  let uiReady = false;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const ui = await fetch(`${workerUrl}/login/`, { signal: AbortSignal.timeout(20000) });
+    if (ui.ok && (ui.headers.get('content-type') ?? '').includes('text/html')) { uiReady = true; break; }
+    if (![404, 500, 502, 503].includes(ui.status) || attempt === 5) break;
+    await new Promise(resolve => setTimeout(resolve, (attempt + 1) * 2000));
+  }
+  if (!uiReady) throw new Error('Login page verification failed');
   const unauthorized = await fetch(`${workerUrl}/api/health`, { signal: AbortSignal.timeout(20000) });
   if (unauthorized.status !== 401) throw new Error('Unauthenticated API access was not rejected');
   const health = await fetch(`${workerUrl}/api/health`, { headers: { Authorization: `Bearer ${ownerKey}` }, signal: AbortSignal.timeout(20000) });
   const healthBody = await health.json();
-  if (!health.ok || healthBody.success !== true) throw new Error('Authenticated API health verification failed');
+  if (!health.ok || healthBody.success !== true || healthBody.data?.db_ok !== true) throw new Error('Authenticated API health verification failed');
   await verifyStopped();
   console.log(`Admin URL: ${workerUrl}/login/`);
   console.log('Verified HTML login, API authentication, and stopped state. Meta is unconnected; cron disabled; no messages sent.');
