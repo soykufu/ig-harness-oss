@@ -42,6 +42,37 @@ jobs:
               process.exit(1);
             }
             console.log('Cloudflare token is active. No resources or Instagram settings were changed.');
+
+            const accountResponse = await fetch('https://api.cloudflare.com/client/v4/accounts', {
+              headers: { Authorization: `Bearer ${token}` },
+              signal: AbortSignal.timeout(20000),
+            });
+            const accounts = await accountResponse.json();
+            if (!accountResponse.ok || accounts.success !== true || !Array.isArray(accounts.result)) {
+              console.error(`ACCOUNT_DISCOVERY_FAILED (HTTP ${accountResponse.status}). Token verification succeeded.`);
+              process.exit(1);
+            }
+            if (accounts.result.length !== 1 || !/^[a-f0-9]{32}$/.test(accounts.result[0]?.id ?? '')) {
+              console.error('ACCOUNT_SELECTION_REQUIRED: Expected exactly one permitted account.');
+              process.exit(1);
+            }
+            const accountId = accounts.result[0].id;
+            console.log(`Permitted Cloudflare account ID: ${accountId}`);
+            for (const [label, path] of [
+              ['D1', 'd1/database'],
+              ['R2', 'r2/buckets'],
+              ['Workers', 'workers/scripts'],
+              ['Pages', 'pages/projects'],
+            ]) {
+              const check = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/${path}`, {
+                headers: { Authorization: `Bearer ${token}` },
+                signal: AbortSignal.timeout(20000),
+              });
+              const result = await check.json();
+              console.log(`${label} read check: ${check.ok && result.success === true ? 'OK' : 'FAILED'} (HTTP ${check.status}).`);
+              if (!check.ok || result.success !== true) process.exitCode = 1;
+            }
+
           } catch (error) {
             const kind = ['TypeError', 'TimeoutError', 'AbortError', 'SyntaxError'].includes(error?.name) ? error.name : 'UnknownError';
             console.error(`Cloudflare verification could not be completed (${kind}).`);
