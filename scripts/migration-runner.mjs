@@ -148,6 +148,9 @@ export async function verifyLatestSchema(query) {
     private_reply_attempts: ['account_id','comment_id','follower_id','status'],
     media_posts: ['phase','phase_started_at','child_creation_ids'],
     admin_sessions: ['id_hash','staff_id','credential_hash','csrf_hash','expires_at'],
+    recruitment_outbound_control: ['account_id','owner_epoch','owner','reconciled_at_ms'],
+    recruitment_outbound_operations: ['account_id','operation_key','owner_epoch','reserved_at_ms','state','message_id'],
+    recruitment_outbound_observations: ['account_id','message_id','sent_at_ms','observed_at_ms'],
   };
   for (const [table, names] of Object.entries(required)) {
     const columns = await query(`PRAGMA table_info(${table})`);
