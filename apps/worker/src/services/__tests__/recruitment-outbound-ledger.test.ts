@@ -32,6 +32,12 @@ it('atomically grants only ten of 25 concurrent reservations and isolates accoun
   expect(result.filter(Boolean)).toHaveLength(10);
   expect(await reserve(db, request('op-0', { accountId: 'b' }))).toBe(true);
 });
+it('cannot reserve a new send after account deletion acquires its lock',async()=>{
+  const {sqlite,db,request}=await fixture();
+  sqlite.exec("INSERT INTO data_deletion_locks(account_id,request_code) VALUES('a','delete')");
+  expect(await reserve(db,request('racing-delete'))).toBe(false);
+  expect(await reserve(db,request('other-account',{accountId:'b'}))).toBe(true);
+});
 
 it('requires explicit unlocked mode, pause=0 and fresh matching ownership', async () => {
   const { db, sqlite, request } = await fixture();

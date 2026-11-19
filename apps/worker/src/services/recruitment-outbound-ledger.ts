@@ -48,6 +48,7 @@ export async function reserveRecruitmentOutbound(db: D1Database, request: {
         + (SELECT COUNT(*) FROM recruitment_outbound_observations
           WHERE account_id=? AND sent_at_ms>? AND sent_at_ms<=?)
       ) < ?
+      AND NOT EXISTS (SELECT 1 FROM data_deletion_locks WHERE account_id=?)
     ON CONFLICT(account_id,operation_key) DO NOTHING
     RETURNING operation_key
   `).bind(accountId, operationKey, ownerEpoch, nowMs,
@@ -55,7 +56,7 @@ export async function reserveRecruitmentOutbound(db: D1Database, request: {
     accountId, nowMs, nowMs - FRESH_MS,
     accountId, nowMs,
     accountId, nowMs - HOUR_MS, nowMs,
-    accountId, nowMs - HOUR_MS, nowMs, CAP).first();
+    accountId, nowMs - HOUR_MS, nowMs, CAP, accountId).first();
   return row !== null;
 }
 
