@@ -401,7 +401,7 @@ export default function ChatsPage() {
               <p className="text-sm text-kumo-subtle">フォロワーを選択</p>
             </div>
           ) : (
-            <MessagePanel friendId={selectedId} onBack={() => setSelectedId(null)} />
+            <MessagePanel key={selectedId} friendId={selectedId} onBack={() => setSelectedId(null)} />
           )}
         </div>
 
