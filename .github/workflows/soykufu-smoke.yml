@@ -1,0 +1,21 @@
+name: SOY-KUFU verify stopped admin
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/soykufu-smoke.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check UI authentication and stopped state without changes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}
+        run: node scripts/soykufu-smoke.mjs
