@@ -21,6 +21,11 @@ import type {
 } from "./types.js";
 
 export const MAX_RICH_MESSAGE_BLOCKS = 10;
+export type MessageLifecycle = {
+  before(payload: { recipient?: { id?: string; comment_id?: string }; message?: unknown }): Promise<string>;
+  acknowledged(ticket: string, response: unknown): Promise<void>;
+  uncertain(ticket: string): Promise<void>;
+};
 
 /**
  * How the token was issued.
@@ -67,11 +72,13 @@ export class InstagramClient {
   private onResponse?: (observation: GraphObservation) => Promise<void> | void;
   private appSecret?: string;
   private beforeRequest?: () => Promise<void> | void;
+  private messageLifecycle?: MessageLifecycle;
 
   private transformMessage?: (recipientId: string, message: unknown, recipient: { id?: string; comment_id?: string }) => Promise<unknown>;
 
-  constructor(opts: { connectionType?: IgConnectionType; pageId?: string | null; transformMessage?: (recipientId: string, message: unknown, recipient: { id?: string; comment_id?: string }) => Promise<unknown>; accessToken: string; igUserId: string; apiVersion?: string; timeoutMs?: number; maxReadRetries?: number; appSecret?: string; beforeRequest?: () => Promise<void> | void; onResponse?: (observation: GraphObservation) => Promise<void> | void }) {
+  constructor(opts: { messageLifecycle?: MessageLifecycle; connectionType?: IgConnectionType; pageId?: string | null; transformMessage?: (recipientId: string, message: unknown, recipient: { id?: string; comment_id?: string }) => Promise<unknown>; accessToken: string; igUserId: string; apiVersion?: string; timeoutMs?: number; maxReadRetries?: number; appSecret?: string; beforeRequest?: () => Promise<void> | void; onResponse?: (observation: GraphObservation) => Promise<void> | void }) {
     this.accessToken = opts.accessToken;
+    this.messageLifecycle = opts.messageLifecycle;
     this.transformMessage = opts.transformMessage;
     this.igUserId = opts.igUserId;
     const version = graphApiVersion(opts.apiVersion);
@@ -89,6 +96,25 @@ export class InstagramClient {
   }
 
   private async request<T>(
+    method: string, path: string, body?: unknown,
+  ): Promise<T> {
+    const payload = body as { recipient?: { id?: string; comment_id?: string }; message?: unknown } | undefined;
+    const lifecycle = method === 'POST' && path.endsWith('/messages') && payload?.message ? this.messageLifecycle : undefined;
+    if (!lifecycle) return this.requestTransport<T>(method, path, body);
+    const ticket = await lifecycle.before(payload!);
+    try {
+      const response = await this.requestTransport<T>(method, path, body);
+      await lifecycle.acknowledged(ticket, response);
+      return response;
+    } catch (error) {
+      // Never retry a message after a timeout, malformed success or failed
+      // acknowledgement write. Propagate persistence failures to the caller.
+      await lifecycle.uncertain(ticket);
+      throw error;
+    }
+  }
+
+  private async requestTransport<T>(
     method: string,
     path: string,
     body?: unknown,

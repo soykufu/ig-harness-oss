@@ -16,9 +16,11 @@ import type { IgAccountRef } from '../services/line-cross-link.js';
 import { refreshAccountTokenIfNeeded } from './ig-token.js';
 import { decorateWithPresence, assertOutboundAllowed, OutboundPausedError } from '../services/human-touch.js';
 import type { Env } from '../index.js';
+import { recruitmentMessageLifecycle } from '../services/recruitment-message-lifecycle.js';
 
 export type AccountEnv = CredentialEnv & {
   OUTBOUND_PREPARATION_LOCK?: string;
+  RECRUITMENT_LEDGER_ENFORCEMENT?: string;
   IG_USER_ID: string;
   IG_USERNAME?: string;
   IG_ACCESS_TOKEN: string;
@@ -180,7 +182,7 @@ export async function getAccountClient(
   env: AccountEnv,
   db: D1Database,
   account: IgAccount,
-  options: { forHealthProbe?: boolean; skipTokenRefresh?: boolean } = {},
+  options: { forHealthProbe?: boolean; skipTokenRefresh?: boolean; recruitmentOperation?: { key: string; ownerEpoch: string } } = {},
 ): Promise<InstagramClient> {
   await assertGraphAvailable(db,account.id);
   if (!options.forHealthProbe) {
@@ -205,7 +207,13 @@ export async function getAccountClient(
   if (env.IG_REQUIRE_APPSECRET_PROOF==='true' && !proofSecret) throw new Error('Instagram App Secret required for appsecret_proof');
   let blockedUntil=0;
   const observe=graphObserver(db,account.id);
+  const guard = async () => {
+    if (env.OUTBOUND_PREPARATION_LOCK === '1') throw new OutboundPausedError();
+    await assertOutboundAllowed(db);
+    if (env.RECRUITMENT_LEDGER_ENFORCEMENT === '1' && !options.recruitmentOperation?.key) throw new Error('Recruitment operation key required');
+  };
   const client = new InstagramClient({ accessToken:token,igUserId:account.ig_user_id,connectionType:accountConnectionType(account),pageId:account.page_id ?? null,apiVersion:env.IG_GRAPH_API_VERSION,appSecret:proofSecret,
+    messageLifecycle: env.RECRUITMENT_LEDGER_ENFORCEMENT === '1' ? recruitmentMessageLifecycle(db, account.id, options.recruitmentOperation, guard) : undefined,
     transformMessage: async (recipientId, message, recipient) => {
       let igsid = recipientId;
       if (!igsid && recipient.comment_id) {
@@ -221,8 +229,8 @@ export async function getAccountClient(
       await observe(observation);
     },
   });
-  return decorateWithPresence(db, client, async () => {
-    if (env.OUTBOUND_PREPARATION_LOCK === '1') throw new OutboundPausedError();
-    await assertOutboundAllowed(db);
-  });
+  // Enforced mode admits each actual message inside the SDK. Avoid sending
+  // presence actions before quota admission (including nested rich blocks).
+  if (env.RECRUITMENT_LEDGER_ENFORCEMENT === '1') return client;
+  return decorateWithPresence(db, client, guard);
 }

@@ -63,6 +63,7 @@ export type Env = {
     OUTBOUND_PREPARATION_LOCK?: string;
     /** Opt-in metadata-only echo ingestion; enable only after migration 0028. */
     RECRUITMENT_ECHO_INGESTION?: string;
+    RECRUITMENT_LEDGER_ENFORCEMENT?: string;
     TRACKING_SIGNING_SECRET?: string;
     TRACKING_ALLOW_UNSIGNED_ACTIONS?: string;
     IG_LINK_TOKEN_SECRET?: string;
