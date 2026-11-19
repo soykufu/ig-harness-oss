@@ -242,7 +242,7 @@ function MessagePanel({ friendId, onBack }: {
       const stored = sessionStorage.getItem(storageKey)
       if (!stored) { setDeliveryNotice('この端末に確認待ちの送信はありません。'); return }
       const pending = JSON.parse(stored) as { nonce: string; digest: string }
-      const result = await fetchApi<{success:boolean;data:{recordedSuccess:boolean;needsReview:boolean}}>(
+      const result = await fetchApi<{success:boolean;data:{recordedSuccess:boolean;needsReview:boolean;echoEvidence:'signed_webhook_recorded'|'unknown'}}>(
         `/api/friends/${friendId}/manual-delivery-status`,
         { headers: { 'Idempotency-Key': pending.nonce }, cache: 'no-store' },
       )
@@ -252,7 +252,7 @@ function MessagePanel({ friendId, onBack }: {
         const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({text: message.trim()}))))).map(b => b.toString(16).padStart(2, '0')).join('')
         if (digest === pending.digest) setMessage('')
         await loadMessages()
-        setDeliveryNotice('送信APIの応答と処理完了の記録を確認しました。相手への到着・既読は未確認です。')
+        setDeliveryNotice('送信APIの応答と処理完了の記録を確認しました。' + (result.data.echoEvidence === 'signed_webhook_recorded' ? '署名確認済みの送信echoも記録されています。' : '送信echoの記録は未確認です。') + '相手への到着・既読は未確認です。')
       } else {
         setDeliveryNotice('送信結果の照合が必要です。再送は行いません。記録がない場合も未送信とは判断できません。')
       }

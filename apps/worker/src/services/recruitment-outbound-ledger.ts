@@ -127,18 +127,21 @@ export async function acknowledgeRecruitmentOutbound(db: D1Database, input: {
  * path does not update last_inbound_at, run scenarios or send any response.
  * Delayed echoes retain actual timestamps. Future timestamps are rejected.
  */
-export async function observeRecruitmentOutboundEcho(db: D1Database, input: {
+export function prepareRecruitmentEchoObservation(db: D1Database, input: {
   accountId: string; senderIgUserId: string; messageId: string; isEcho: boolean;
   sentAtMs: number; receivedAtMs: number;
-}): Promise<void> {
+}): D1PreparedStatement {
   const { accountId, senderIgUserId, messageId, sentAtMs, receivedAtMs } = input;
   identity(accountId); identity(senderIgUserId); identity(messageId); time(sentAtMs); time(receivedAtMs);
   if (input.isEcho !== true || sentAtMs > receivedAtMs) throw new Error('Invalid outgoing echo');
-  const row = await db.prepare(`INSERT INTO recruitment_outbound_observations
+  return db.prepare(`INSERT INTO recruitment_outbound_observations
       (account_id,message_id,sent_at_ms,observed_at_ms)
     SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM ig_accounts WHERE id=? AND ig_user_id=?)
     ON CONFLICT(account_id,message_id) DO UPDATE SET
       sent_at_ms=MIN(sent_at_ms,excluded.sent_at_ms), observed_at_ms=MAX(observed_at_ms,excluded.observed_at_ms)
-    RETURNING message_id`).bind(accountId, messageId, sentAtMs, receivedAtMs, accountId, senderIgUserId).first();
-  if (!row) throw new Error('Echo account identity mismatch');
+    RETURNING message_id`).bind(accountId, messageId, sentAtMs, receivedAtMs, accountId, senderIgUserId);
+}
+
+export async function observeRecruitmentOutboundEcho(db: D1Database, input: Parameters<typeof prepareRecruitmentEchoObservation>[1]): Promise<void> {
+  if (!await prepareRecruitmentEchoObservation(db, input).first()) throw new Error('Echo account identity mismatch');
 }

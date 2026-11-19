@@ -9,21 +9,23 @@ export async function readRecruitmentManualStatus(db: D1Database, accountId: str
     .bind(accountId, followerId, key).first<{status: string; created_at_ms: number; owner_epoch: string}>();
   if (!intent) return null;
   const result = await db.prepare(`SELECT o.state,o.message_id,o.owner_epoch,
+      EXISTS(SELECT 1 FROM recruitment_echo_receipts r WHERE r.account_id=o.account_id AND r.message_id=o.message_id) AS signed_echo,
       EXISTS(SELECT 1 FROM recruitment_outbound_observations e
         WHERE e.account_id=o.account_id AND e.message_id=o.message_id) AS recorded
     FROM recruitment_outbound_operations o WHERE o.account_id=?
       AND substr(o.operation_key,1,length(?)+1)=? || ':' ORDER BY o.operation_key`)
-    .bind(accountId, key, key).all<{state: string; message_id: string | null; recorded: number; owner_epoch: string}>();
+    .bind(accountId, key, key).all<{state: string; message_id: string | null; recorded: number; signed_echo: number; owner_epoch: string}>();
   const operations = result.results.map(row => ({
     state: row.state,
     apiAcknowledged: row.state === 'sent' && !!row.message_id && row.owner_epoch === intent.owner_epoch,
+    signedEchoRecorded: row.signed_echo === 1,
     messageRecordedInLedger: row.recorded === 1,
   }));
-  // The observation table mixes API acknowledgements and webhook echoes. It
-  // cannot establish which source was observed, nor receipt/read by a student.
+  // Only the separate receipt proves signed webhook metadata was recorded.
+  // Neither table proves arrival/read by a student or complete echo coverage.
   const recordedSuccess = intent.status === 'sent' && operations.length > 0
     && operations.every(op => op.apiAcknowledged && op.messageRecordedInLedger);
   return { intentStatus: intent.status, createdAtMs: intent.created_at_ms, operations,
     recordedSuccess, needsReview: !recordedSuccess, mayRetry: false,
-    echoEvidence: 'unknown' as const, recipientReceipt: 'unknown' as const };
+    echoEvidence: operations.length > 0 && operations.every(op => op.signedEchoRecorded) ? 'signed_webhook_recorded' as const : 'unknown' as const, recipientReceipt: 'unknown' as const };
 }

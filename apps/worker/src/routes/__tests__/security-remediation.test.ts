@@ -89,10 +89,11 @@ it('purges the new outbound ledger only for the verified business account', asyn
     sqlite.prepare("INSERT INTO recruitment_outbound_control VALUES(?,'epoch','harness',0)").run(id);
     sqlite.prepare("INSERT INTO recruitment_outbound_operations VALUES(?,'operation','epoch',0,'sent','message')").run(id);
     sqlite.prepare("INSERT INTO recruitment_outbound_observations VALUES(?,'message',0,0)").run(id);
+    sqlite.prepare("INSERT INTO recruitment_echo_receipts VALUES(?,'message',0,0,0)").run(id);
   }
   const resolved = await request(`/api/data-deletion/${response.confirmation_code}/resolve`, { method: 'POST', headers: { Authorization: 'Bearer owner-key', 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId: 'a', identityVerified: true }) });
   expect(resolved.status).toBe(200);
-  for (const table of ['recruitment_outbound_control','recruitment_outbound_operations','recruitment_outbound_observations']) {
+  for (const table of ['recruitment_outbound_control','recruitment_outbound_operations','recruitment_outbound_observations','recruitment_echo_receipts']) {
     expect(sqlite.prepare(`SELECT account_id FROM ${table}`).all()).toEqual([{ account_id: 'b' }]);
   }
   expect(sqlite.prepare("SELECT is_active FROM ig_accounts WHERE id='a'").get()?.is_active).toBe(0);

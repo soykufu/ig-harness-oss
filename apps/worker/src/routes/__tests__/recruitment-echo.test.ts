@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { webhook } from '../webhook.js';
 import { testDatabase } from '../../test-utils/d1.js';
+import { acknowledgeRecruitmentOutbound } from '../../services/recruitment-outbound-ledger.js';
 import { ingestRecruitmentEchoes } from '../../services/recruitment-echo-ingestion.js';
 
 const SECRET = 'test-app-secret';
@@ -72,6 +73,7 @@ it('rejects bad HMAC before ingesting or queuing anything', async () => {
   const { sqlite, post, event } = await fixture();
   expect((await post([{ id: '111', messaging: [event()] }], { signature: 'sha256=' + '0'.repeat(64) })).status).toBe(403);
   expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_outbound_observations').get()?.n).toBe(0);
+  expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_echo_receipts').get()?.n).toBe(0);
 });
 
 it('does not ingest entries whose exact account or App secret does not match', async () => {
@@ -80,12 +82,14 @@ it('does not ingest entries whose exact account or App secret does not match', a
   sqlite.exec("UPDATE ig_accounts SET app_secret='another-app'");
   expect((await post([{ id: '111', messaging: [event()] }])).status).toBe(200);
   expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_outbound_observations').get()?.n).toBe(0);
+  expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_echo_receipts').get()?.n).toBe(0);
 });
 
 it('leaves ingestion disabled unless explicitly opted in', async () => {
   const { sqlite, post, event } = await fixture();
   expect((await post([{ id: '111', messaging: [event()] }], { flag: '0' })).status).toBe(200);
   expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_outbound_observations').get()?.n).toBe(0);
+  expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_echo_receipts').get()?.n).toBe(0);
 });
 
 it('rejects a malformed echo batch before writing any earlier valid item', async () => {
@@ -94,6 +98,7 @@ it('rejects a malformed echo batch before writing any earlier valid item', async
     expect((await post([{ id: '111', messaging: [event(), bad] }])).status).toBe(400);
   }
   expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_outbound_observations').get()?.n).toBe(0);
+  expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_echo_receipts').get()?.n).toBe(0);
 });
 
 it('does not acknowledge success on deletion lock or failed durable storage', async () => {
@@ -110,4 +115,37 @@ it('records delayed echoes without falsely refreshing reconciliation proof', asy
   await ingestRecruitmentEchoes(db, { id: 'a', ig_user_id: '111' }, [{ kind: 'messaging', value: event() }], NOW + 7_200_000);
   expect(sqlite.prepare('SELECT sent_at_ms,observed_at_ms FROM recruitment_outbound_observations').get()).toMatchObject({ sent_at_ms: NOW, observed_at_ms: NOW + 7_200_000 });
   expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_outbound_control').get()?.n).toBe(0);
+});
+
+it('records signed provenance without body or recipient', async () => {
+  const {sqlite,post,event}=await fixture(); await post([{id:'111',messaging:[event()]}]);
+  const rows=sqlite.prepare('SELECT * FROM recruitment_echo_receipts').all();
+  expect(rows).toHaveLength(1); expect(rows[0]).toMatchObject({account_id:'a',message_id:'message-1',sent_at_ms:NOW});
+  expect(JSON.stringify(rows)).not.toMatch(/must-not-be-stored|student/);
+});
+it('deduplicates replays and preserves first/latest receipt', async () => {
+  const {sqlite,db,event}=await fixture();
+  for(const delay of [1000,3000,2000]) await ingestRecruitmentEchoes(db,{id:'a',ig_user_id:'111'},[{kind:'messaging',value:event()}],NOW+delay);
+  expect(sqlite.prepare('SELECT * FROM recruitment_echo_receipts').all()).toEqual([{account_id:'a',message_id:'message-1',sent_at_ms:NOW,first_received_at_ms:NOW+1000,last_received_at_ms:NOW+3000}]);
+});
+it('never promotes API or legacy mixed evidence to signed echo', async () => {
+  const {sqlite,db}=await fixture();
+  sqlite.prepare("INSERT INTO recruitment_outbound_operations VALUES('a','api','epoch',?,'reserved',NULL)").run(NOW);
+  await acknowledgeRecruitmentOutbound(db,{accountId:'a',operationKey:'api',messageId:'api-mid',acknowledgedAtMs:NOW});
+  sqlite.prepare("INSERT INTO recruitment_outbound_observations VALUES('a','legacy',?,?)").run(NOW,NOW);
+  expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_echo_receipts').get()?.n).toBe(0);
+});
+it('rolls back observation when signed receipt storage fails', async () => {
+  const {sqlite,post,event}=await fixture();
+  sqlite.exec("CREATE TRIGGER receipt_failure BEFORE INSERT ON recruitment_echo_receipts BEGIN SELECT RAISE(ABORT,'test failure'); END");
+  expect((await post([{id:'111',messaging:[event()]}])).status).toBe(500);
+  for(const table of ['recruitment_outbound_observations','recruitment_echo_receipts','active_mutations']) expect(sqlite.prepare('SELECT COUNT(*) n FROM '+table).get()?.n).toBe(0);
+});
+it('separates accounts and cascades only the deleted observation evidence', async () => {
+  const {sqlite,db,event}=await fixture();
+  sqlite.exec("INSERT INTO ig_accounts(id,ig_user_id,access_token,created_at,updated_at) VALUES('b','222','test','2026-01-01','2026-01-01')");
+  for(const [id,ig] of [['a','111'],['b','222']]) await ingestRecruitmentEchoes(db,{id,ig_user_id:ig},[{kind:'messaging',value:event({sender:{id:ig}})}],NOW);
+  expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_echo_receipts').get()?.n).toBe(2);
+  sqlite.exec("DELETE FROM recruitment_outbound_observations WHERE account_id='a'");
+  expect(sqlite.prepare('SELECT account_id FROM recruitment_echo_receipts').all()).toEqual([{account_id:'b'}]);
 });

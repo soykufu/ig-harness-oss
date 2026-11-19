@@ -1,5 +1,5 @@
 import { beginActivity, endActivity } from '../lib/activity.js';
-import { observeRecruitmentOutboundEcho } from './recruitment-outbound-ledger.js';
+import { prepareRecruitmentEchoObservation } from './recruitment-outbound-ledger.js';
 
 export class InvalidRecruitmentEcho extends Error {}
 export class RecruitmentEchoBusy extends Error {}
@@ -28,10 +28,22 @@ export async function ingestRecruitmentEchoes(db: D1Database, account: { id: str
   if (!activity) throw new RecruitmentEchoBusy('Data deletion is in progress');
   try {
     for (const { value } of echoes) {
-      await observeRecruitmentOutboundEcho(db, {
+      const observation = prepareRecruitmentEchoObservation(db, {
         accountId: account.id, senderIgUserId: value.sender.id, messageId: value.message.mid,
         isEcho: true, sentAtMs: value.timestamp, receivedAtMs,
       });
+      // Keep signed-webhook provenance atomic with the quota observation.
+      // API acknowledgements and legacy mixed observations never write here.
+      const receipt = db.prepare(`INSERT INTO recruitment_echo_receipts
+          (account_id,message_id,sent_at_ms,first_received_at_ms,last_received_at_ms)
+        SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM ig_accounts WHERE id=? AND ig_user_id=?)
+        ON CONFLICT(account_id,message_id) DO UPDATE SET
+          sent_at_ms=MIN(sent_at_ms,excluded.sent_at_ms),
+          first_received_at_ms=MIN(first_received_at_ms,excluded.first_received_at_ms),
+          last_received_at_ms=MAX(last_received_at_ms,excluded.last_received_at_ms)`)
+        .bind(account.id,value.message.mid,value.timestamp,receivedAtMs,receivedAtMs,account.id,account.ig_user_id);
+      const saved = await db.batch([observation, receipt]);
+      if (!saved[0]?.results.length) throw new InvalidRecruitmentEcho('Echo account identity mismatch');
     }
   } finally { await endActivity(db, activity); }
   return echoes.length;

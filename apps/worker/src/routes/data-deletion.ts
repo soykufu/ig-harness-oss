@@ -96,7 +96,7 @@ dataDeletion.post('/api/data-deletion/:code/resolve', requireRole('owner'), asyn
   statements.push(db.prepare(`UPDATE webhook_events SET payload=NULL, subject_id=NULL, status='completed', finished_at=? WHERE account_id=?${scoped ? ` AND subject_id IN (SELECT igsid FROM followers WHERE ${condition})` : ''}`).bind(new Date().toISOString(), account.id, ...(scoped ? values : [])));
   statements.push(db.prepare(`DELETE FROM followers WHERE ${condition}`).bind(...values));
   if (!scoped) {
-    for (const table of ['media_posts', 'broadcasts', 'engagement_gates', 'scenarios', 'forms', 'tracked_links', 'tags', 'rich_messages', 'comment_rules', 'delivery_failures', 'recruitment_manual_intents', 'recruitment_outbound_operations', 'recruitment_outbound_observations', 'recruitment_outbound_control']) {
+    for (const table of ['media_posts', 'broadcasts', 'engagement_gates', 'scenarios', 'forms', 'tracked_links', 'tags', 'rich_messages', 'comment_rules', 'delivery_failures', 'recruitment_manual_intents', 'recruitment_outbound_operations', 'recruitment_echo_receipts', 'recruitment_outbound_observations', 'recruitment_outbound_control']) {
       statements.push(db.prepare(`DELETE FROM ${table} WHERE account_id=?`).bind(account.id));
     }
     // Keep the account tombstone so a stale env token cannot recreate it.

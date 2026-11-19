@@ -82,3 +82,11 @@ it('rejects invalid identity and unauthorized roles', async () => {
   for (const role of ['staff',undefined]) { setRole(role); expect((await get()).status).toBe(403); }
   setRole('admin'); expect((await get()).status).toBe(200);
 });
+
+it('distinguishes signed metadata without claiming receipt or releasing uncertainty', async () => {
+  const {sqlite,get}=await fixture();
+  sqlite.exec("INSERT INTO recruitment_echo_receipts VALUES('a','mid',1000,1000,1000)");
+  expect((await (await get()).json() as any).data).toMatchObject({echoEvidence:'signed_webhook_recorded',recipientReceipt:'unknown',mayRetry:false});
+  sqlite.exec("UPDATE recruitment_manual_intents SET status='uncertain'");
+  expect((await (await get()).json() as any).data).toMatchObject({echoEvidence:'signed_webhook_recorded',recordedSuccess:false,needsReview:true,mayRetry:false});
+});
