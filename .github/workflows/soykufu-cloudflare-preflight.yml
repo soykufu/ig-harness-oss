@@ -1,8 +1,12 @@
 name: SOY-KUFU Cloudflare connection check
 
-# Manual only. No deployment, Meta access, or Instagram messages.
+# Read-only verification on manual runs or changes to this workflow only.
+# No deployment, Meta access, or Instagram messages.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/soykufu-cloudflare-preflight.yml']
 
 permissions:
   contents: read
@@ -18,9 +22,13 @@ jobs:
         shell: bash
         run: |
           node --input-type=module <<'NODE'
-          const token = process.env.CLOUDFLARE_API_TOKEN;
+          const token = (process.env.CLOUDFLARE_API_TOKEN ?? '').trim();
           if (!token) {
             console.error('CLOUDFLARE_API_TOKEN secret is missing.');
+            process.exit(1);
+          }
+          if (!/^[A-Za-z0-9_-]{20,}$/.test(token)) {
+            console.error('TOKEN_FORMAT_INVALID: Store only the token, without a command, Bearer prefix, quotes, or line breaks.');
             process.exit(1);
           }
           try {
@@ -34,8 +42,9 @@ jobs:
               process.exit(1);
             }
             console.log('Cloudflare token is active. No resources or Instagram settings were changed.');
-          } catch {
-            console.error('Cloudflare verification could not be completed.');
+          } catch (error) {
+            const kind = ['TypeError', 'TimeoutError', 'AbortError', 'SyntaxError'].includes(error?.name) ? error.name : 'UnknownError';
+            console.error(`Cloudflare verification could not be completed (${kind}).`);
             process.exit(1);
           }
           NODE
