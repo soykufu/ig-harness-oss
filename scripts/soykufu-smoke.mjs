@@ -1,0 +1,33 @@
+const origin = 'https://soykufu-ig-harness-20261119.soykufu.workers.dev';
+const key = process.env.IG_HARNESS_API_KEY;
+const cfToken = process.env.CLOUDFLARE_API_TOKEN;
+if (!key || !cfToken) throw new Error('Verification credentials missing');
+try {
+  const response = await fetch(`${origin}/login/`, { signal: AbortSignal.timeout(20000) });
+  const html = await response.text();
+  if (!response.ok || !response.headers.get('content-type')?.includes('text/html') || !html.includes('<html lang="ja"')) throw new Error('Japanese HTML login not available');
+  const chunk = html.match(/src="(\/_next\/static\/[^"?]+\.js)"/)?.[1];
+  if (!chunk || !(await fetch(origin+chunk, { signal: AbortSignal.timeout(20000) })).ok) throw new Error('Login JavaScript asset unavailable');
+  const unauth = await fetch(`${origin}/api/health`, { signal: AbortSignal.timeout(20000) });
+  if (unauth.status !== 401) throw new Error('Unauthenticated API request must be rejected');
+  const auth = await fetch(`${origin}/api/health`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(20000) });
+  const health = await auth.json();
+  if (!auth.ok || health.success !== true || health.data?.db_ok !== true) throw new Error('Authenticated API/database health failed');
+  const d1 = await fetch('https://api.cloudflare.com/client/v4/accounts/e76a3f504309ca9289d8dfa3ee504502/d1/database/e55c3b84-ea9a-48fd-a7a3-08253089d295/query', {
+    method: 'POST', headers: { Authorization: `Bearer ${cfToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sql: "SELECT (SELECT value FROM integration_settings WHERE key='outbound_paused') AS paused, (SELECT COUNT(*) FROM ig_accounts) AS accounts, (SELECT COUNT(*) FROM followers) AS followers" }),
+    signal: AbortSignal.timeout(20000),
+  });
+  const data = await d1.json();
+  const state = data.result?.[0]?.results?.[0];
+  if (!d1.ok || data.success !== true || state?.paused !== '1' || Number(state.accounts) !== 0 || Number(state.followers) !== 0) throw new Error('Stopped empty installation verification failed');
+  console.log(`Verified Japanese login HTML/JavaScript: ${origin}/login/`);
+  console.log('Verified unauthenticated API=401, authenticated API=200, database healthy, outbound paused, accounts=0, followers=0.');
+  console.log('Read-only smoke check: no message, Meta authentication, deployment or content change.');
+} catch(error) {
+  // Never include transport errors that could contain request headers.
+  const message = error instanceof Error ? error.message : '';
+  const allowed = ['Japanese HTML login not available','Login JavaScript asset unavailable','Unauthenticated API request must be rejected','Authenticated API/database health failed','Stopped empty installation verification failed'];
+  console.error(allowed.includes(message) ? message : 'Verification could not complete; credentials remain hidden.');
+  process.exitCode = 1;
+}
