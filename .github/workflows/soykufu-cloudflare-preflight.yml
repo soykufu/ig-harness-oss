@@ -19,9 +19,12 @@ jobs:
       - name: Verify Cloudflare token without displaying it
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}
         shell: bash
         run: |
           node --input-type=module <<'NODE'
+          const adminKey = process.env.IG_HARNESS_API_KEY ?? '';
+          console.log(`Admin login key: ${adminKey.length >= 20 ? 'configured' : 'missing_or_too_short'}.`);
           const token = (process.env.CLOUDFLARE_API_TOKEN ?? '').trim();
           if (!token) {
             console.error('CLOUDFLARE_API_TOKEN secret is missing.');
