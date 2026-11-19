@@ -199,10 +199,23 @@ function MessagePanel({ friendId, onBack }: {
     sendLockRef.current = true
     setSending(true)
     try {
-      await fetchApi(`/api/friends/${friendId}/messages`, {
+      const content = JSON.stringify({ text: message.trim() })
+      const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content)))).map(b => b.toString(16).padStart(2, '0')).join('')
+      const storageKey = `ig-manual-intent:${friendId}`
+      const stored = sessionStorage.getItem(storageKey)
+      const pending = stored ? JSON.parse(stored) as { nonce: string; digest: string } : { nonce: crypto.randomUUID(), digest }
+      if (pending.digest !== digest) throw new Error('前の送信結果を確認するまで、内容を変えて再送できません。送信履歴を確認してください。')
+      // Persist only the opaque nonce and hash, never the message text. Retain
+      // it on timeout/reload so the same action cannot acquire a fresh key.
+      sessionStorage.setItem(storageKey, JSON.stringify(pending))
+      const response = await fetchApi<{success:boolean;data?:{replayed?:boolean}}>(`/api/friends/${friendId}/messages`, {
         method: 'POST',
-        body: JSON.stringify({ content: JSON.stringify({ text: message.trim() }) }),
+        headers: { 'Idempotency-Key': pending.nonce },
+        body: JSON.stringify({ content }),
       })
+      if (!response.success) throw new Error('送信結果を確認できません。履歴を確認してください。')
+      sessionStorage.removeItem(storageKey)
+      if (response.data?.replayed) { await loadMessages(); setMessage(''); return }
       setMessages((prev) => [...prev, {
         id: crypto.randomUUID(),
         direction: 'out',
@@ -214,8 +227,7 @@ function MessagePanel({ friendId, onBack }: {
     } catch (err) {
       alert('送信失敗: ' + (err instanceof Error ? err.message : String(err)))
     }
-    setSending(false)
-    sendLockRef.current = false
+    finally { setSending(false); sendLockRef.current = false }
   }
 
   return (

@@ -15,6 +15,7 @@ import {
 import type { Friend as DbFriend, Tag as DbTag, IgAccount } from '@ig-harness/db';
 import { resolveAccount, getAccountClient } from '../lib/accounts.js';
 import type { Env } from '../index.js';
+import { claimRecruitmentManualIntent, finishRecruitmentManualIntent } from '../services/recruitment-manual-intent.js';
 
 const friends = new Hono<Env>();
 
@@ -413,6 +414,7 @@ friends.get('/api/friends/:id/messages', async (c) => {
 
 // POST /api/friends/:id/messages - send message to friend
 friends.post('/api/friends/:id/messages', async (c) => {
+  let intent: {accountId:string;key:string}|undefined;
   try {
     const actingAccount = await resolveAccount(c);
     if (!actingAccount) return c.json({ success: false, error: 'account not found' }, 404);
@@ -444,12 +446,20 @@ friends.post('/api/friends/:id/messages', async (c) => {
       ? await getIgAccountById(db, friend.account_id)
       : actingAccount;
     if (!account) return c.json({ success: false, error: 'account not found' }, 404);
-    const igClient = await getAccountClient(c.env, c.env.DB, account);
     const messageType = body.messageType ?? 'text';
     const igsid = friend.igsid;
 
     // Send via IG Messaging API
     const parsed = JSON.parse(body.content) as Record<string, unknown>;
+    let operation: {key:string;ownerEpoch:string}|undefined;
+    if(c.env.RECRUITMENT_LEDGER_ENFORCEMENT==='1'){
+      if(!/^[A-Za-z0-9_-]{16,100}$/.test(c.req.header('Idempotency-Key')??''))return c.json({success:false,error:'Idempotency-Key is required'},400);
+      const result=await claimRecruitmentManualIntent(db,{accountId:account.id,followerId:Number(friend.id),nonce:c.req.header('Idempotency-Key')??'',messageType,content:body.content,altText:body.altText},c.env.OUTBOUND_PREPARATION_LOCK==='1');
+      if(result.status==='sent')return c.json({success:true,data:{sent:true,replayed:true}});
+      if(result.status!=='claimed'||!result.key||!result.ownerEpoch)return c.json({success:false,reason:result.status,error:'This operation cannot be sent again; review its recorded outcome.'},409);
+      intent={accountId:account.id,key:result.key}; operation={key:result.key,ownerEpoch:result.ownerEpoch};
+    }
+    const igClient = await getAccountClient(c.env, c.env.DB, account,{recruitmentOperation:operation});
     switch (messageType) {
       case 'text':
         await igClient.sendText(igsid, parsed.text as string || body.content);
@@ -476,8 +486,11 @@ friends.post('/api/friends/:id/messages', async (c) => {
       .bind(friend.id, messageType, body.content)
       .run();
 
+    if(intent)await finishRecruitmentManualIntent(db,intent.accountId,intent.key,'sent');
+
     return c.json({ success: true, data: { sent: true } });
   } catch (err) {
+    if(intent)await finishRecruitmentManualIntent(c.env.DB,intent.accountId,intent.key,'uncertain');
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error('POST /api/friends/:id/messages error:', errMsg);
     return c.json({ success: false, error: errMsg }, 500);
