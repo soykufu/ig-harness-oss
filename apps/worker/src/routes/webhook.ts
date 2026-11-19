@@ -28,6 +28,7 @@ import { hideCommentIfModerated } from '../lib/comment-moderation.js';
 import { enqueueCommentRuleJob, normalizeReplyMode, processCommentRuleJobs, resumeCommentJobs } from '../services/comment-rule-jobs.js';
 import { forwardLinkedInstagramEngagement } from '../services/line-mileage.js';
 import { isOutboundPaused } from '../services/human-touch.js';
+import { ingestRecruitmentEchoes, InvalidRecruitmentEcho, RecruitmentEchoBusy } from '../services/recruitment-echo-ingestion.js';
 import type { IgAccount } from '@ig-harness/db';
 import type { Env } from '../index.js';
 
@@ -143,6 +144,7 @@ webhook.post('/webhook', async (c) => {
 
   if (!Array.isArray(body.entry)) return c.json({ error: 'Invalid entries' }, 400);
   const accepted: IgAccount[] = [];
+  const processing: IgAccount[] = [];
   for (const entry of body.entry) {
     const account = pickAccountForEntry(accounts, entry.id);
     if (!account || account.ig_user_id !== entry.id || ((await readAppSecret(account, c.env)) || c.env.IG_APP_SECRET) !== matchedSecret) continue;
@@ -153,19 +155,31 @@ webhook.post('/webhook', async (c) => {
     ];
     // Acknowledge only after durable ingestion succeeds. A D1 error returns
     // non-2xx and Meta can retry; previously accepted events deduplicate.
+    // Echo is deliberately separate from queueWebhookEvents: never opens the
+    // inbound window or triggers a reply, including while outbound is paused.
+    if (c.env.RECRUITMENT_ECHO_INGESTION === '1') {
+      try { await ingestRecruitmentEchoes(db, account, events); }
+      catch (error) {
+        if (error instanceof InvalidRecruitmentEcho) return c.json({ error: 'Invalid outgoing message metadata' }, 400);
+        if (error instanceof RecruitmentEchoBusy) return c.json({ error: 'Data deletion is in progress' }, 503);
+        throw error;
+      }
+    }
     await queueWebhookEvents(db, account.id, events);
     c.executionCtx.waitUntil(recordWebhookReceived(db, account.id).catch(() => {}));
     accepted.push(account);
+    if (events.some(({ kind, value }) => (kind !== 'messaging' && kind !== 'standby') || !('message' in value) || !value.message?.is_echo)) processing.push(account);
   }
   if (accepted.length) c.executionCtx.waitUntil(recordSignatureSuccess(db, accepted.map((a) => a.id)).catch(() => {}));
-  if (accepted.length && c.env.TENANT_SCHEDULER) await armScheduler(c.env);
+  if (processing.length && c.env.TENANT_SCHEDULER) await armScheduler(c.env);
   c.executionCtx.waitUntil((async () => {
-    for (const account of accepted) {
+    for (const account of processing) {
       const activity = await beginActivity(db);
       if (!activity) continue;
       try {
         const current = await getIgAccountById(db, account.id);
         if (!current || !current.is_active) continue;
+        if (await isOutboundPaused(db)) continue;
         const client = await getAccountClient(c.env, db, current);
         await processQueuedWebhooks(db, client, current, c.env.WORKER_URL, c.env);
       } finally { await endActivity(db, activity); }

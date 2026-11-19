@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { handleFollowCheckPostback } from '../engagement-gate.js';
 
 function createMockDb() {
+  // A real inbound timestamp precedes eligibility evaluation. Computing it
+  // inside the DB mock could put it 1ms after the policy's captured clock.
+  const lastInboundAt = new Date(Date.now() - 1000).toISOString();
   const gates: any[] = [];
   const deliveries: any[] = [];
   const updates: any[] = [];
@@ -9,7 +12,7 @@ function createMockDb() {
   function makeStatement(sql: string, params: unknown[]) {
     return {
       async first() {
-        if (sql.includes('FROM followers')) return {last_inbound_at:new Date().toISOString(),messaging_owner:'primary'};
+        if (sql.includes('FROM followers')) return {last_inbound_at:lastInboundAt,messaging_owner:'primary'};
         if (sql.includes('FROM engagement_gates')) {
           return gates.find((g) => g.id === params[0]) ?? null;
         }

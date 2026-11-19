@@ -1,4 +1,5 @@
-/** Preparation module: intentionally NOT wired to messaging or webhooks yet.
+/** Preparation module: intentionally NOT wired to outbound messaging yet.
+ * Webhook metadata ingestion is separately opt-in and disabled by default.
  * It cannot prove complete native/manual echo coverage. Ownership cutover and
  * that evidence must precede integration. No recipient/text content is stored.
  */

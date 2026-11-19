@@ -71,6 +71,22 @@ it('encrypts tokens with random IVs and account binding; wrong keys cannot decry
   await expect(openToken(encrypted, 'account-b', key)).rejects.toThrow('cannot be decrypted');
   await expect(sealToken('test', 'account-a')).rejects.toThrow('required');
 });
+it('purges the new outbound ledger only for the verified business account', async () => {
+  const { request, sqlite } = await fixture();
+  const response = await (await request('/data-deletion', { method: 'POST', body: new URLSearchParams({ signed_request: await signed('app-secret') }) })).json() as any;
+  for (const [id, ig] of [['a','111'],['b','222']]) {
+    sqlite.prepare("INSERT INTO ig_accounts(id,ig_user_id,access_token,created_at,updated_at) VALUES(?,?,'test','2026-01-01','2026-01-01')").run(id, ig);
+    sqlite.prepare("INSERT INTO recruitment_outbound_control VALUES(?,'epoch','harness',0)").run(id);
+    sqlite.prepare("INSERT INTO recruitment_outbound_operations VALUES(?,'operation','epoch',0,'sent','message')").run(id);
+    sqlite.prepare("INSERT INTO recruitment_outbound_observations VALUES(?,'message',0,0)").run(id);
+  }
+  const resolved = await request(`/api/data-deletion/${response.confirmation_code}/resolve`, { method: 'POST', headers: { Authorization: 'Bearer owner-key', 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId: 'a', identityVerified: true }) });
+  expect(resolved.status).toBe(200);
+  for (const table of ['recruitment_outbound_control','recruitment_outbound_operations','recruitment_outbound_observations']) {
+    expect(sqlite.prepare(`SELECT account_id FROM ${table}`).all()).toEqual([{ account_id: 'b' }]);
+  }
+  expect(sqlite.prepare("SELECT is_active FROM ig_accounts WHERE id='a'").get()?.is_active).toBe(0);
+});
 it('throttles heartbeat writes while retaining a periodic liveness timestamp', async () => {
   const { db, sqlite } = await fixture(); vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-26T00:00:00Z'));
   await recordCronRun(db); const first = sqlite.prepare("SELECT value FROM integration_settings WHERE key='health:last_cron_at'").get()?.value;
