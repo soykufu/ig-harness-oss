@@ -67,3 +67,10 @@ SDKはtracking変換・リンク生成・appsecret proof・本文シリアライ
 署名検証・entry/account/App照合が済んだWebhookのopt-in入口だけが `recruitment_echo_receipts` を書きます。API応答や旧混在観測からのバックフィルはありません。既存の通数観測と専用証拠行を同一D1 batchで保存し、証拠保存失敗時は通数観測もロールバックしてWebhookを成功扱いしません。account＋MIDで重複排除し、Metaの送信時刻・最初/最新の受信時刻だけを保存（本文/宛先の保存なし）。通数を二重加算せず、最終受信/24h窓/照合鮮度/不明結果は更新・解除しません。
 
 読取照合は、対象操作の全MIDに専用証拠がある場合だけ `signed_webhook_recorded`、それ以外はunknownと返します。これは署名済みWebhookメタデータの保存証拠で、候補者への到達・既読や手動送信の完全捕捉を証明しません。正式な事業アカウント削除では対象accountだけ削除し、観測削除時にもFK cascadeで証拠を残しません。0030も未配置で、echoフラグ/送信停止は維持します。
+
+
+### 採用業務状態の最終抑止（準備実装）
+
+強制台帳モードの通常DMは、リンク変換等が終わった実fetch直前にfollowers.metadataのrecruitment_deliveryを再読する。state=active、owner_epoch一致、observed_at_msが未来でなく5分以内、valid_until_msが現在より後かつ観測から5分以内である必要がある。相談consulting・停止stopped・辞退declined・hold・欠落・不正JSON・期限切れ・未知の値はすべて保留。既存importにactiveを一括補完しない。この状態は同意/特典配布許可/24h窓/通数の代替ではない。
+
+この記録を実際の相談/辞退/停止イベントから正規同期する処理・管理手順は未接続。コード追加だけで相談後停止が本番完成したとは扱わない。private replyは通常DMとは別経路で最終条件接続が残る。新フラグ無効・本番未配置・送信停止は維持する。

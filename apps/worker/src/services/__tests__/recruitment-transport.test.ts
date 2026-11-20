@@ -10,6 +10,7 @@ async function fixture(key: string | undefined = 'operation') {
   sqlite.exec("INSERT INTO ig_accounts(id,ig_user_id,access_token,is_default,created_at,updated_at) VALUES('a','111','test',1,'2026-01-01','2026-01-01'); INSERT INTO integration_settings(key,value) VALUES('outbound_paused','0')");
   sqlite.prepare("INSERT INTO recruitment_outbound_control VALUES('a','epoch','harness',?)").run(NOW);
   sqlite.prepare("INSERT INTO followers(igsid,account_id,last_inbound_at) VALUES('student','a',?)").run(new Date(NOW-1000).toISOString());
+  sqlite.prepare('UPDATE followers SET metadata=?').run(JSON.stringify({recruitment_delivery:{state:'active',owner_epoch:'epoch',observed_at_ms:NOW,valid_until_ms:NOW+300_000}}));
   const fetch = vi.fn(async () => new Response(JSON.stringify({ message_id: `mid-${fetch.mock.calls.length}`, recipient_id: 'student' })));
   vi.stubGlobal('fetch',fetch);
   const account = sqlite.prepare("SELECT * FROM ig_accounts WHERE id='a'").get() as any;

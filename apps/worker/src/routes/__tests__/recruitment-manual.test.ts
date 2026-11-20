@@ -11,6 +11,7 @@ async function fixture(){
   sqlite.exec("INSERT INTO ig_accounts(id,ig_user_id,access_token,token_expires_at,is_default,created_at,updated_at) VALUES('a','111','test',9999999999,1,'2026-01-01','2026-01-01'),('b','222','test',9999999999,0,'2026-01-01','2026-01-01'); INSERT INTO integration_settings(key,value) VALUES('outbound_paused','0')");
   sqlite.prepare("INSERT INTO recruitment_outbound_control VALUES('a','epoch','harness',?)").run(NOW);
   for(const [id,igsid,account] of [[1,'student','a'],[2,'other','a'],[3,'foreign','b']])sqlite.prepare('INSERT INTO followers(id,igsid,account_id,last_inbound_at) VALUES(?,?,?,?)').run(id,igsid,account,new Date(NOW-1000).toISOString());
+  sqlite.prepare('UPDATE followers SET metadata=?').run(JSON.stringify({recruitment_delivery:{state:'active',owner_epoch:'epoch',observed_at_ms:NOW,valid_until_ms:NOW+300_000}}));
   const fetch=vi.fn(async()=>new Response(JSON.stringify({message_id:'mid',recipient_id:'student'})));vi.stubGlobal('fetch',fetch);
   const app=new Hono().route('/',friends);
   const env={DB:db,IG_USER_ID:'',IG_ACCESS_TOKEN:'',RECRUITMENT_LEDGER_ENFORCEMENT:'1',OUTBOUND_PREPARATION_LOCK:'0'};

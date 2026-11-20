@@ -11,6 +11,7 @@ async function fixture() {
   let now=NOON, locked=false;
   sqlite.prepare("INSERT INTO recruitment_outbound_control VALUES('a','epoch','harness',?)").run(now);
   sqlite.prepare("INSERT INTO followers(igsid,account_id,last_inbound_at) VALUES('student','a',?)").run(new Date(now-1000).toISOString());
+  sqlite.prepare('UPDATE followers SET metadata=?').run(JSON.stringify({recruitment_delivery:{state:'active',owner_epoch:'epoch',observed_at_ms:NOON,valid_until_ms:NOON+300_000}}));
   const fetch=vi.fn(async()=>new Response(JSON.stringify({message_id:'message-'+fetch.mock.calls.length,recipient_id:'student'})));
   vi.stubGlobal('fetch',fetch);
   const make=(mutate:()=>void|Promise<void>,key='operation')=>new InstagramClient({accessToken:'test',igUserId:'111',appSecret:'test-secret',
@@ -59,3 +60,20 @@ it('rechecks each rich block after a stop arrives following the first success',a
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_outbound_operations').get()?.n).toBe(1);
 });
+
+it.each(['consulting','stopped','declined','hold','missing','malformed','expired','future','wrong-owner','too-long'])(
+  'blocks business state %s changed during link generation',async change=>{
+    const {sqlite,fetch,make}=await fixture();
+    const mutate=()=>{
+      let value:any={state:'active',owner_epoch:'epoch',observed_at_ms:NOON,valid_until_ms:NOON+300_000};
+      if(['consulting','stopped','declined','hold'].includes(change))value.state=change;
+      if(change==='expired')value.valid_until_ms=NOON;
+      if(change==='future')value.observed_at_ms=NOON+1;
+      if(change==='wrong-owner')value.owner_epoch='other';
+      if(change==='too-long')value.valid_until_ms=NOON+300_001;
+      sqlite.prepare('UPDATE followers SET metadata=?').run(change==='malformed'?'bad':JSON.stringify(change==='missing'?{}:{recruitment_delivery:value}));
+    };
+    await expect(make(mutate).sendText('student','test')).rejects.toThrow('business state');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(sqlite.prepare('SELECT state FROM recruitment_outbound_operations').get()?.state).toBe('uncertain');
+  });
