@@ -1,3 +1,4 @@
+import {isPrivateRecoveryKey} from '../lib/private-recovery-key.js';
 import { Hono } from 'hono';
 import { getFriendByIgsid, getIgAccountById, getDefaultIgAccount } from '@ig-harness/db';
 import { getAccountClient } from '../lib/accounts.js';
@@ -114,7 +115,7 @@ images.get('/api/images', async (c) => {
   const listed = await c.env.IMAGES.list({ limit, cursor, delimiter: '/' });
   const workerUrl = (c.env.WORKER_URL || new URL(c.req.url).origin).replace(/\/+$/, '');
 
-  const items = listed.objects.map((obj) => ({
+  const items = listed.objects.filter(obj=>!isPrivateRecoveryKey(obj.key)).map((obj) => ({
     key: obj.key,
     url: `${workerUrl}/images/${obj.key}`,
     size: obj.size,
@@ -279,6 +280,7 @@ export function parseByteRange(
 // stories) with range/length semantics before ingesting them.
 images.get('/images/:key', async (c) => {
   const key = c.req.param('key');
+  if(isPrivateRecoveryKey(key))return c.json({success:false,error:'Image not found'},404);
   const rangeHeader = c.req.header('Range');
 
   if (!rangeHeader) {
@@ -330,6 +332,7 @@ images.get('/images/:key', async (c) => {
 images.delete('/api/images/:key', async (c) => {
   try {
     const key = c.req.param('key');
+    if(isPrivateRecoveryKey(key))return c.json({success:false,error:'Image not found'},404);
     await c.env.IMAGES.delete(key);
     return c.json({ success: true, data: null });
   } catch (err) {
