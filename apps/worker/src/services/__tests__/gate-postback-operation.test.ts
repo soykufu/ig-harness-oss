@@ -48,3 +48,5 @@ it('honors max loops with a skipped receipt and zero messages',async()=>{
 it('never creates a LINE link or falls back for an unverified connection',async()=>{
  const f=await fixture();f.sqlite.exec("UPDATE engagement_gates SET line_connection_id='unverified'");await expect(f.run()).rejects.toThrow('handoff');expect(f.fetch).not.toHaveBeenCalled();
 });
+
+it('refuses a rich reward with an oversized second block before any partial delivery',async()=>{const f=await fixture(true,true);f.sqlite.prepare('UPDATE rich_messages SET blocks=?').run(JSON.stringify([{type:'text',text:'first'},{type:'card',title:'あ'.repeat(81),buttons:[]}]));await expect(f.run()).rejects.toThrow('limits');expect(f.fetch).not.toHaveBeenCalled();expect(f.sqlite.prepare('SELECT state FROM recruitment_gate_operations').get()?.state).toBe('uncertain');await f.run();expect(f.fetch).not.toHaveBeenCalled();});

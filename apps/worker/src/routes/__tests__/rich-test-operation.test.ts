@@ -33,3 +33,8 @@ it.each(['role','db-role','inactive','nonce','template-precondition','foreign-te
  const expected=['timeout','wrong-ack','changed-template'].includes(mode)?1:mode==='missing-slot'?2:0;expect(f.fetch).toHaveBeenCalledTimes(expected);
  const count=f.fetch.mock.calls.length;expect((await f.post(mode==='nonce'?'':undefined,mode==='template-precondition'?{to_igsid:'student',template_version:'0'.repeat(64)}:mode==='bad-context'?{to_igsid:'student',reward_url:{url:'wrong'}}:undefined)).status).not.toBe(200);expect(f.fetch).toHaveBeenCalledTimes(count);
 });
+
+it.each(['later-text','expanded-title','invalid-unicode'])('rejects all rich-test blocks before the first Graph call for %s',async mode=>{
+ const f=await fixture();const bad=mode==='later-text'?{type:'text',text:'あ'.repeat(1001)}:mode==='expanded-title'?{type:'card',title:'{FOLLOWER_USERNAME}',buttons:[]}:{type:'text',text:'invalid\ud800'};
+ f.sqlite.prepare('UPDATE rich_messages SET blocks=?').run(JSON.stringify([{type:'text',text:'first'},bad]));const response=await f.post(undefined,mode==='expanded-title'?{to_igsid:'student',follower_username:'あ'.repeat(81)}:undefined);expect(response.status).not.toBe(200);expect(f.fetch).not.toHaveBeenCalled();expect(f.sqlite.prepare('SELECT COUNT(*) n FROM recruitment_outbound_operations').get()?.n).toBe(0);
+});

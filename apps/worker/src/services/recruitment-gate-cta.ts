@@ -86,7 +86,7 @@ export async function sendRecruitmentGateCta(db:D1Database,gate:EngagementGate,d
  if(gate.line_connection_id)throw Error('CTA LINE handoff requires verification');
  const sourceHash=await sha256(source.payload),definitionVersion=await version(db,gate,delivery,mode,sourceHash),rich=await template(db,gate);
  let actions:RichAction[];
- if(rich)actions=renderRichActions(delivery.igsid,JSON.parse(rich.blocks),{gateId:gate.id,deliveryId:delivery.id,rewardUrl:gate.reward_url});
+ if(rich)actions=renderRichActions(delivery.igsid,JSON.parse(rich.blocks),{gateId:gate.id,deliveryId:delivery.id,rewardUrl:gate.reward_url},{preserveCopy:true});
  else{
   const copy=recruitmentTemplateCopy(gate.initial_dm_text,gate.initial_dm_button_label);
   actions=[{type:'template',elements:[{title:copy.title,subtitle:copy.subtitle,buttons:[{type:'postback',title:copy.buttonTitle,payload:`CHECK_FOLLOW:${gate.id}:${delivery.id}`}]}]}];

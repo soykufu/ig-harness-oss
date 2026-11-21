@@ -75,7 +75,7 @@ export async function handleRecruitmentGatePostback(db:D1Database,client:Client,
   }
   const rewardUrl=input.workerBaseUrl&&gate.reward_url?await wrapClickTracking(input.workerBaseUrl,gate.id,gate.reward_url,delivery.igsid,input.igAccount?.security):gate.reward_url;
   const richId=follows?gate.reward_dm_rich_message_id:gate.follow_reminder_dm_rich_message_id;let actions:RichAction[];
-  if(richId){const r=await getRichMessage(db,richId);if(!r)throw Error('Gate template missing');actions=renderRichActions(delivery.igsid,r.blocks as RichMessageBlock[],{gateId:gate.id,deliveryId:delivery.id,rewardUrl});}
+  if(richId){const r=await getRichMessage(db,richId);if(!r)throw Error('Gate template missing');actions=renderRichActions(delivery.igsid,r.blocks as RichMessageBlock[],{gateId:gate.id,deliveryId:delivery.id,rewardUrl},{preserveCopy:true});}
   else if(follows){const text=gate.reward_dm_text.replace(/\{\{?\s*IGSID\s*\}?\}/g,()=>delivery.igsid)+(rewardUrl?'\n\n'+rewardUrl:'');actions=[{type:'text',text}];}
   else actions=[{type:'template',elements:[{title:gate.follow_reminder_dm_text.slice(0,80),subtitle:gate.follow_reminder_dm_text.length>80?gate.follow_reminder_dm_text.slice(80,200):undefined,buttons:[{type:'postback',title:gate.follow_reminder_button_label,payload:`CHECK_FOLLOW:${gate.id}:${delivery.id}`}]}]}];
   proof.messages=actions.map(richActionMessage);proof.payloadVersion=await sha256(JSON.stringify(proof.messages));
