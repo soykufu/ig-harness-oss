@@ -1,9 +1,11 @@
-import {afterEach,expect,it,vi} from 'vitest';
+import {beforeEach,afterEach,expect,it,vi} from 'vitest';
+// Keep delivery-path tests inside the allowed JST window regardless of runner time.
+beforeEach(()=>{vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-11-21T03:00:00Z'));});
 import {gateFixture} from '../../test-utils/gate-fixture.js';
 import {enqueueCommentRuleJob,processCommentRuleJobs,resumeCommentJobs} from '../comment-rule-jobs.js';
 import {commentJobClientFactory} from '../../lib/accounts.js';
 const close:(()=>void)[]=[];
-afterEach(()=>{while(close.length)close.pop()!();vi.useRealTimers();});
+afterEach(()=>{while(close.length)close.pop()!();vi.useRealTimers();vi.useRealTimers();});
 async function fixture(){const f=await gateFixture();close.push(()=>f.sqlite.close());return f;}
 async function queue(f:Awaited<ReturnType<typeof fixture>>,id='c'){await enqueueCommentRuleJob(f.db,{accountId:'a',ruleId:'r',commentId:id,followerId:1,messageType:'text',body:JSON.stringify({text:'guide'}),replyText:null,delaySeconds:0,commentCreatedAt:new Date(Date.now()-1000).toISOString()});}
 it('keeps distinct durable private and post-inbound DM phase identities',async()=>{

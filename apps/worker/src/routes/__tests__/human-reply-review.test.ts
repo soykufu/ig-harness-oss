@@ -1,10 +1,12 @@
-import {afterEach,it,expect,vi} from 'vitest';
+import {beforeEach,afterEach,it,expect,vi} from 'vitest';
+// Keep delivery-path tests inside the allowed JST window regardless of runner time.
+beforeEach(()=>{vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-11-21T03:00:00Z'));});
 import {Hono} from 'hono';
 import type {Env} from '../../index.js';
 import {friends} from '../friends.js';
 import {testDatabase} from '../../test-utils/d1.js';
 import {recruitmentSubjectHash} from '../../services/recruitment-inbound-holds.js';
-const close:(()=>void)[]=[];afterEach(()=>{while(close.length)close.pop()!();vi.restoreAllMocks();vi.unstubAllGlobals();});
+const close:(()=>void)[]=[];afterEach(()=>{while(close.length)close.pop()!();vi.useRealTimers();vi.restoreAllMocks();vi.unstubAllGlobals();});
 async function fixture(){const {db,sqlite}=await testDatabase();close.push(()=>sqlite.close());const now=Date.now();vi.spyOn(Date,'now').mockReturnValue(now);
  sqlite.exec("INSERT INTO ig_accounts(id,ig_user_id,access_token,is_default,created_at,updated_at) VALUES('a','111','test',1,'2026-01-01','2026-01-01'),('b','222','test',0,'2026-01-01','2026-01-01'); INSERT INTO followers(id,igsid,account_id) VALUES(1,'student','a'),(2,'foreign','b'); INSERT INTO staff_members(id,name,role,api_key) VALUES('owner','test','owner','test'); INSERT INTO integration_settings(key,value) VALUES('outbound_paused','1')");
  sqlite.prepare('UPDATE followers SET last_inbound_at=?').run(new Date(now).toISOString());sqlite.prepare("INSERT INTO recruitment_outbound_control VALUES('a','epoch','harness',?)").run(now);sqlite.prepare("INSERT INTO recruitment_inbound_holds VALUES('a','in',?,'consulting',?,?)").run(await recruitmentSubjectHash('a','student'),now,now);

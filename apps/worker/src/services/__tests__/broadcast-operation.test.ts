@@ -1,7 +1,9 @@
-import {afterEach,it,expect,vi} from 'vitest';
+import {beforeEach,afterEach,it,expect,vi} from 'vitest';
+// Keep delivery-path tests inside the allowed JST window regardless of runner time.
+beforeEach(()=>{vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-11-21T03:00:00Z'));});
 import {gateFixture} from '../../test-utils/gate-fixture.js';
 import {processBroadcastSend} from '../broadcast.js';
-const close:(()=>void)[]=[];afterEach(()=>{while(close.length)close.pop()!();});
+const close:(()=>void)[]=[];afterEach(()=>{while(close.length)close.pop()!();vi.useRealTimers();});
 it.each(['ready','failed','paused'])('uses durable per-recipient broadcast client for %s',async mode=>{
  const f=await gateFixture();close.push(()=>f.sqlite.close());f.sqlite.prepare('UPDATE followers SET last_inbound_at=?').run(new Date().toISOString());
  f.sqlite.exec("INSERT INTO broadcasts(id,name,message_type,body,account_id) VALUES(1,'test','text','{\"text\":\"guide\"}','a')");
