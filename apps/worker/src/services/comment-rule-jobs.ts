@@ -70,7 +70,8 @@ export async function resumeCommentJobs(db: D1Database, followerId: number, acco
             await db.prepare("UPDATE follower_scenarios SET next_step_at=?,end_reason=NULL WHERE id=? AND end_reason='awaiting_inbound'").bind(new Date(Date.now() + step.delay_minutes * 60000).toISOString(), row.id).run();
     }
 }
-export async function processCommentRuleJobs(db: D1Database, client: InstagramClient, accountId: string): Promise<void> {
+export type CommentJobClientFactory = (operationKey: string) => Promise<InstagramClient>;
+export async function processCommentRuleJobs(db: D1Database, client: InstagramClient, accountId: string, clientForOperation?: CommentJobClientFactory): Promise<void> {
     // Operator stop switch: jobs stay pending, they resume after unpausing.
     if (await isOutboundPaused(db)) return;
     await db.prepare("UPDATE comment_rule_jobs SET status='uncertain', reason='interrupted' WHERE account_id=? AND status='processing' AND julianday(started_at)<julianday(?)").bind(accountId, new Date(Date.now() - 5 * 60000).toISOString()).run();
@@ -85,12 +86,15 @@ export async function processCommentRuleJobs(db: D1Database, client: InstagramCl
         if (!claim)
             continue;
         try {
+            // One client per durable phase: private reply and the later DM must
+            // not share slots, and a retry must never invent a new operation ID.
+            const jobClient = clientForOperation ? await clientForOperation(`${job.delivery_mode === 'private_reply' ? 'comment' : 'comment-dm'}:${job.id}`) : client;
             if (job.delivery_mode === 'private_reply') {
                 // B-15: live-comment private replies are only valid while the
                 // broadcast is live. Skip them once it has ended (unknown
                 // state → try, the Graph API rejects and the failure is logged).
                 if (job.is_live === 1 && job.media_id) {
-                    const liveIds = await client.getLiveMediaIds().catch(() => null);
+                    const liveIds = await jobClient.getLiveMediaIds().catch(() => null);
                     if (liveIds && !liveIds.includes(job.media_id)) {
                         await db.prepare('UPDATE comment_rule_jobs SET status=?,reason=? WHERE id=?').bind('skipped', 'live_ended', job.id).run();
                         continue;
@@ -98,7 +102,7 @@ export async function processCommentRuleJobs(db: D1Database, client: InstagramCl
                 }
                 const body = JSON.parse(job.body);
                 const text = job.message_type === 'text' ? body.text : 'コメントありがとうございます。ご案内をお届けするため、このメッセージに返信してください。';
-                const outcome = await sendCommentPrivateReply(db, client, { accountId, followerId: job.follower_id, commentId: job.comment_id, text, createdAt: job.comment_created_at });
+                const outcome = await sendCommentPrivateReply(db, jobClient, { accountId, followerId: job.follower_id, commentId: job.comment_id, text, createdAt: job.comment_created_at });
                 if (outcome !== 'sent') {
                     await db.prepare('UPDATE comment_rule_jobs SET status=?,reason=? WHERE id=?').bind(outcome === 'outcome_unknown' ? 'uncertain' : outcome === 'rejected' ? 'failed' : 'skipped', `private_reply_${outcome}`, job.id).run();
                     await recordGateFailure(db,job,`private_reply_${outcome}`,outcome==='expired' || outcome==='rejected' || outcome==='standby');
@@ -119,7 +123,7 @@ export async function processCommentRuleJobs(db: D1Database, client: InstagramCl
                     await db.prepare("UPDATE comment_rule_jobs SET status='skipped',reason=? WHERE id=?").bind(eligibility, job.id).run();
                     continue;
                 }
-                await sendIgMessage(client, job.igsid, job.message_type, JSON.parse(job.body));
+                await sendIgMessage(jobClient, job.igsid, job.message_type, JSON.parse(job.body));
                 await db.batch([
                     db.prepare("UPDATE comment_rule_jobs SET status='sent',error_code=NULL,error_subcode=NULL,error_message=NULL,reason=NULL,finished_at=? WHERE id=?").bind(new Date().toISOString(), job.id),
                     db.prepare("INSERT INTO messages_log(follower_id,direction,message_type,body,trigger_source) VALUES(?,'out',?,?,'comment_rule')").bind(job.follower_id, job.message_type, job.body),

@@ -90,3 +90,9 @@ RECRUITMENT_INBOUND_SUPPRESSION=1の場合だけ署名/entry/account/App照合�
 ### 受信保留の読取表示（未配置）
 
 owner/admin限定GET /api/friends/:id/recruitment-holdsは、認証済みの対象accountと既存followerの組合せだけを読み、状態別件数/最古・最新時刻/needsReviewを返す。本文・生IGSID・イベントキー・subject_hashは返さない。個人削除済みsubjectなしのtombstoneは表示しない。応答はno-storeで設定補完や送信/解除を行わず、空でもmayResume=false。DB未適用/取得不能は503で0件とは扱わない。チャット画面へ確認待ち/記録なし/取得不能を表示し、会話切替時は以前の取得を中止する。実ブラウザ表示とMeta実機は未検証。人が相談へ返信する認証・操作単位の許可は次の独立残件。
+
+### Comment job connection (2026-11-21, source only)
+
+Enforcement mode now gives each claimed comment job a separate SDK client. The stable private phase key is `comment:<job-id>` and the post-inbound DM phase is `comment-dm:<job-id>`. Cron and queued-webhook entry points provide this factory. Each phase reads an existing, fresh harness owner epoch; it never refreshes reconciliation or generates an epoch. Client creation failure has no shared-client fallback. Existing SDK reservation, final guard, business state and inbound hold checks remain in force. The later DM retains its ordinary 24h requirement and cannot borrow the private reply's seven-day window. Completed jobs do not create another client.
+
+The final private-reply gate check also requires the delivery's follower and IGSID to match the job's follower, `triggered` status, no end reason, and the same active account gate. A drop/completion/stop or changed destination during asynchronous preparation blocks the network call. Public comment replies and other broadcast/step/form paths are separate outstanding integrations. Missing Meta authentication, ownership evidence and business state synchronization remain blocking conditions. No enforcement flag or production send was enabled by this change.

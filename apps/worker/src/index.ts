@@ -48,7 +48,7 @@ import { capabilities } from './routes/capabilities.js';
 import { mediaPosts } from './routes/media-posts.js';
 import { messengerProfile } from './routes/messenger-profile.js';
 import { processMediaPosts } from './services/media-publish.js';
-import { ensureDefaultAccount, getAccountClient, toIgAccountRef } from './lib/accounts.js';
+import { ensureDefaultAccount, getAccountClient, toIgAccountRef, commentJobClientFactory } from './lib/accounts.js';
 import { recordCronRun, recordTokenValidity } from './lib/health.js';
 
 export type Env = {
@@ -365,7 +365,7 @@ export async function runScheduledJobs(
       if (work.followups) tasks.push(['followups', processFollowupDrip(env.DB, igClient, env.WORKER_URL, undefined, ref, account.id)]);
       if (work.media) tasks.push(['media', processMediaPosts(env.DB, igClient, account.id)]);
       if (work.webhooks) tasks.push(['webhooks', processQueuedWebhooks(env.DB, igClient, account, env.WORKER_URL, env)]);
-      else if (work.comments) tasks.push(['comments', processCommentRuleJobs(env.DB, igClient, account.id)]);
+      else if (work.comments) tasks.push(['comments', processCommentRuleJobs(env.DB, igClient, account.id, commentJobClientFactory(env, env.DB, current))]);
       const results = await Promise.allSettled(tasks.map(([, task]) => task));
       results.forEach((result, i) => {
         if (result.status === 'rejected') console.error(`[cron] ${tasks[i]![0]} failed for account=${account.id}`, result.reason instanceof Error ? result.reason.name : 'unknown');

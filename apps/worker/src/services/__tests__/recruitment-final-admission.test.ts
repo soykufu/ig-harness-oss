@@ -111,3 +111,20 @@ it.each(['expired','future','missing-created','live','job-stopped','attempt-sent
  };
  await expect(make(mutate,'comment:job').sendPrivateReply('comment','test')).rejects.toThrow();expect(fetch).not.toHaveBeenCalled();
 });
+
+it.each(['valid','wrong-follower','wrong-igsid','dropped','delivered','ended','inactive','wrong-account'])(
+ 'reconciles private reply gate %s at the last network boundary',async change=>{
+ const {sqlite,fetch,make}=await privateFixture();
+ sqlite.exec("INSERT INTO engagement_gates(id,name,trigger_type,initial_dm_text,follow_reminder_dm_text,reward_dm_text,account_id,require_follow,status) VALUES('gate','test','comment_on_post','hello','follow','guide','a',0,'active'); INSERT INTO gate_deliveries(id,gate_id,follower_id,igsid,status) VALUES('delivery','gate',1,'student','triggered'); UPDATE comment_rule_jobs SET gate_delivery_id='delivery'");
+ const mutate=()=>{
+   if(change==='wrong-follower'){sqlite.exec("INSERT INTO followers(id,igsid,account_id) VALUES(2,'other','a'); UPDATE gate_deliveries SET follower_id=2");}
+   if(change==='wrong-igsid')sqlite.exec("UPDATE gate_deliveries SET igsid='other'");
+   if(change==='dropped'||change==='delivered')sqlite.prepare('UPDATE gate_deliveries SET status=?').run(change);
+   if(change==='ended')sqlite.exec("UPDATE gate_deliveries SET end_reason='stopped'");
+   if(change==='inactive')sqlite.exec("UPDATE engagement_gates SET status='paused'");
+   if(change==='wrong-account'){sqlite.exec("INSERT INTO ig_accounts(id,ig_user_id,access_token,created_at,updated_at) VALUES('b','222','test','2026-01-01','2026-01-01'); UPDATE engagement_gates SET account_id='b'");}
+ };
+ const send=make(mutate,'comment:job').sendPrivateReply('comment','test');
+ if(change==='valid'){await send;expect(fetch).toHaveBeenCalledTimes(1);}
+ else {await expect(send).rejects.toThrow();expect(fetch).not.toHaveBeenCalled();}
+});

@@ -14,7 +14,7 @@ export async function assertRecruitmentPrivateReplyReady(db:D1Database,accountId
    WHERE j.account_id=? AND j.id=? AND j.comment_id=? AND j.status='processing'
      AND j.delivery_mode='private_reply' AND p.status='processing' AND f.messaging_owner='primary'
      AND COALESCE(j.is_live,0)=0 AND julianday(j.due_at)<=julianday(?) AND julianday(j.expires_at)>julianday(?)
-     AND (j.gate_delivery_id IS NULL OR EXISTS(SELECT 1 FROM gate_deliveries d JOIN engagement_gates g ON g.id=d.gate_id WHERE d.id=j.gate_delivery_id AND g.account_id=j.account_id AND g.status='active'))`)
+     AND (j.gate_delivery_id IS NULL OR EXISTS(SELECT 1 FROM gate_deliveries d JOIN engagement_gates g ON g.id=d.gate_id WHERE d.id=j.gate_delivery_id AND g.account_id=j.account_id AND g.status='active' AND d.follower_id=j.follower_id AND d.igsid=f.igsid AND d.status='triggered' AND d.end_reason IS NULL))`)
    .bind(accountId,operation.key.slice(8),commentId,new Date(nowMs).toISOString(),new Date(nowMs).toISOString())
    .first<{igsid:string;metadata:string;comment_created_at:string|null;started_at:string|null;attempted_at:string}>();
  if(!row?.igsid)throw Error('Private reply job requires reconciliation');

@@ -22,7 +22,7 @@ import { processSingleDelivery } from '../services/step-delivery.js';
 import { handleFollowCheckPostback, triggerGateForComment, triggerGateForDmKeyword, triggerGateForStoryMention, resumeCommentGate } from '../services/engagement-gate.js';
 import type { IgAccountRef } from '../services/line-cross-link.js';
 import { listIgAccounts, getIgAccountById } from '@ig-harness/db';
-import { ensureDefaultAccount, pickAccountForEntry, toIgAccountRef, getAccountClient } from '../lib/accounts.js';
+import { ensureDefaultAccount, pickAccountForEntry, toIgAccountRef, getAccountClient, commentJobClientFactory, type AccountEnv } from '../lib/accounts.js';
 import { recordWebhookReceived, recordSignatureFailure, recordSignatureSuccess } from '../lib/health.js';
 import { queueWebhookEvents, drainWebhookEvents } from '../services/webhook-queue.js';
 import { hideCommentIfModerated } from '../lib/comment-moderation.js';
@@ -197,7 +197,7 @@ webhook.post('/webhook', async (c) => {
   return c.json({ status: 'ok' }, 200);
 });
 
-export async function processQueuedWebhooks(db: D1Database, client: InstagramClient, account: IgAccount, workerUrl?: string, env?: CredentialEnv): Promise<void> {
+export async function processQueuedWebhooks(db: D1Database, client: InstagramClient, account: IgAccount, workerUrl?: string, env?: AccountEnv): Promise<void> {
   // Operator stop switch: leave events pending, they resume after unpausing.
   if (await isOutboundPaused(db)) return;
   await drainWebhookEvents(db, account.id, async (event) => {
@@ -215,7 +215,7 @@ export async function processQueuedWebhooks(db: D1Database, client: InstagramCli
     else if (event.kind === 'story_insights') await recordStoryInsights(db, account.id, value);
     // Anything else stays queued with kind recorded; add handlers here.
   });
-  await processCommentRuleJobs(db, client, account.id);
+  await processCommentRuleJobs(db, client, account.id, commentJobClientFactory(env, db, account));
 }
 
 /**
