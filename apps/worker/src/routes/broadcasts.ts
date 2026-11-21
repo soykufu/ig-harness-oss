@@ -9,7 +9,7 @@ import {
 } from '@ig-harness/db';
 import type { Broadcast as DbBroadcast, BroadcastMessageType } from '@ig-harness/db';
 import { processBroadcastSend, broadcastSummary, validateBroadcastMessage, parseBroadcastTagFilter } from '../services/broadcast.js';
-import { resolveAccount, getAccountClient } from '../lib/accounts.js';
+import { resolveAccount, getAccountClient, recruitmentJobClientFactory } from '../lib/accounts.js';
 import type { Env } from '../index.js';
 
 const broadcasts = new Hono<Env>();
@@ -194,7 +194,7 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
       : await resolveAccount(c);
     if (!account) return c.json({ success: false, error: 'account not found' }, 404);
     const igClient = await getAccountClient(c.env, c.env.DB, account);
-    await processBroadcastSend(c.env.DB, igClient, existing.id, c.env.WORKER_URL, account.id);
+    await processBroadcastSend(c.env.DB, igClient, existing.id, c.env.WORKER_URL, account.id, recruitmentJobClientFactory(c.env,c.env.DB,account));
 
     const result = await getBroadcastById(c.env.DB, existing.id);
     return c.json({ success: true, data: result ? { ...serializeBroadcast(result), deliverySummary: await broadcastSummary(c.env.DB,result.id) } : null });

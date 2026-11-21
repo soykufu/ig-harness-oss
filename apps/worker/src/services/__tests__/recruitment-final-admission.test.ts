@@ -1,3 +1,4 @@
+import {recruitmentBroadcastVersion} from '../recruitment-broadcast-admission.js';
 import {recruitmentStepVersion} from '../recruitment-step-version.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { InstagramClient } from '@ig-harness/ig-sdk';
@@ -17,7 +18,7 @@ async function fixture() {
   const fetch=vi.fn(async()=>new Response(JSON.stringify({message_id:'message-'+fetch.mock.calls.length,recipient_id:'student'})));
   vi.stubGlobal('fetch',fetch);
   const make=(mutate:()=>void|Promise<void>,key='operation',stepVersion?:string)=>new InstagramClient({accessToken:'test',igUserId:'111',appSecret:'test-secret',
-    messageLifecycle:recruitmentMessageLifecycle(db,'a',{key,ownerEpoch:'epoch',stepVersion},async()=>{if(locked)throw new Error('Preparation locked');},()=>now),
+    messageLifecycle:recruitmentMessageLifecycle(db,'a',{key,ownerEpoch:'epoch',definitionVersion:stepVersion},async()=>{if(locked)throw new Error('Preparation locked');},()=>now),
     transformMessage:async(_id,message)=>{await Promise.resolve();await mutate();return message;},
   });
   return {sqlite,db,fetch,make,setNow:(n:number)=>{now=n;},lock:()=>{locked=true;}};
@@ -155,4 +156,23 @@ it.each(['valid','completed','paused-scenario','wrong-account','wrong-follower',
  const send=make(mutate,'step:1:1',change==='version-missing'?undefined:version).sendText('student','test');
  if(change==='valid'){await send;expect(fetch).toHaveBeenCalledOnce();}
  else{await expect(send).rejects.toThrow();expect(fetch).not.toHaveBeenCalled();}
+});
+
+it.each(['valid','body-edit','stopped','recipient-stopped','wrong-account','stale','missing-proof','tag-valid','tag-removed'])(
+ 'rechecks broadcast %s at the SDK boundary',async change=>{
+ const {sqlite,fetch,make}=await fixture();
+ sqlite.exec("INSERT INTO broadcasts(id,name,message_type,body,account_id,status) VALUES(1,'test','text','{}','a','sending')");
+ sqlite.prepare("INSERT INTO broadcast_recipients(broadcast_id,follower_id,status,attempted_at) VALUES(1,1,'processing',?)").run(new Date(NOON).toISOString());
+ if(change==='tag-valid'||change==='tag-removed')sqlite.exec("INSERT INTO tags(id,name,account_id) VALUES(1,'tag','a'); INSERT INTO follower_tags(follower_id,tag_id) VALUES(1,1); UPDATE broadcasts SET tag_filter='{\"tagId\":1}'");
+ const version=await recruitmentBroadcastVersion(sqlite.prepare('SELECT * FROM broadcasts').get() as any);
+ const mutate=()=>{
+  if(change==='tag-removed')sqlite.exec('DELETE FROM follower_tags');
+  if(change==='body-edit')sqlite.exec("UPDATE broadcasts SET body='changed'");
+  if(change==='stopped')sqlite.exec("UPDATE broadcasts SET status='draft'");
+  if(change==='recipient-stopped')sqlite.exec("UPDATE broadcast_recipients SET status='skipped'");
+  if(change==='wrong-account'){sqlite.exec("INSERT INTO ig_accounts(id,ig_user_id,access_token,created_at,updated_at) VALUES('b','222','test','2026-01-01','2026-01-01'); UPDATE broadcasts SET account_id='b'");}
+  if(change==='stale')sqlite.prepare('UPDATE broadcast_recipients SET attempted_at=?').run(new Date(NOON-60001).toISOString());
+ };
+ const send=make(mutate,'broadcast:1:1',change==='missing-proof'?undefined:version).sendText('student','test');
+ if(change==='valid'||change==='tag-valid'){await send;expect(fetch).toHaveBeenCalledOnce();}else{await expect(send).rejects.toThrow();expect(fetch).not.toHaveBeenCalled();}
 });

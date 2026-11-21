@@ -1,3 +1,4 @@
+import {recruitmentBroadcastVersion} from './recruitment-broadcast-admission.js';
 import { messagingEligibility } from './messaging-window.js';
 import { getBroadcastById } from '@ig-harness/db';
 import type { Broadcast } from '@ig-harness/db';
@@ -23,6 +24,7 @@ export async function broadcastSummary(db: D1Database, id: number | string) {
 export async function processBroadcastSend(
   db: D1Database, igClient: InstagramClient, broadcastId: number | string,
   _workerUrl?: string, accountId?: string,
+  clientForOperation?: (key:string,version?:string)=>Promise<InstagramClient>,
 ): Promise<Broadcast> {
   let broadcast = await getBroadcastById(db, broadcastId);
   if (!broadcast) throw new Error(`Broadcast ${broadcastId} not found`);
@@ -85,7 +87,8 @@ export async function processBroadcastSend(
       .first<{ status: string }>();
     if (claimed?.status !== 'processing') continue;
     try {
-      await sendIgMessage(igClient, recipient.igsid, broadcast.message_type, body);
+      const sender=clientForOperation?await clientForOperation(`broadcast:${broadcast.id}:${recipient.follower_id}`,await recruitmentBroadcastVersion(broadcast)):igClient;
+      await sendIgMessage(sender, recipient.igsid, broadcast.message_type, body);
     } catch (error) {
       const failure = deliveryFailure(error);
       const retry = error instanceof InstagramApiError && error.status<500 && error.rateLimited && recipient.attempt_count<4;
@@ -109,7 +112,7 @@ export async function processBroadcastSend(
   return (await getBroadcastById(db, broadcast.id))!;
 }
 
-export async function processScheduledBroadcasts(db: D1Database, client: InstagramClient, workerUrl?: string, accountId?: string): Promise<void> {
+export async function processScheduledBroadcasts(db: D1Database, client: InstagramClient, workerUrl?: string, accountId?: string, clientForOperation?: (key:string,version?:string)=>Promise<InstagramClient>): Promise<void> {
   if (!accountId) return;
   // Operator stop switch: broadcasts stay scheduled, resume after unpausing.
   if (await isOutboundPaused(db)) return;
@@ -117,7 +120,7 @@ export async function processScheduledBroadcasts(db: D1Database, client: Instagr
     (status='sending' OR (status='scheduled' AND julianday(scheduled_at)<=julianday(?))) ORDER BY updated_at, id LIMIT 3`)
     .bind(accountId, new Date().toISOString()).all<{ id: number }>();
   for (const row of rows.results) {
-    try { await processBroadcastSend(db, client, row.id, workerUrl, accountId); }
+    try { await processBroadcastSend(db, client, row.id, workerUrl, accountId, clientForOperation); }
     catch (error) { console.error(`Broadcast processing failed: ${row.id}`, error); }
   }
 }
