@@ -1,3 +1,4 @@
+import {readStoppedInstallationSnapshot} from './stopped-installation-snapshot.mjs';
 const origin = 'https://soykufu-ig-harness-20261119.soykufu.workers.dev';
 const key = process.env.IG_HARNESS_API_KEY;
 const cfToken = process.env.CLOUDFLARE_API_TOKEN;
@@ -21,6 +22,17 @@ try {
   const data = await d1.json();
   const state = data.result?.[0]?.results?.[0];
   if (!d1.ok || data.success !== true || state?.paused !== '1' || Number(state.accounts) !== 0 || Number(state.followers) !== 0) throw new Error('Stopped empty installation verification failed');
+  const query=async sql=>{
+    if(!/^\s*(SELECT|PRAGMA)\b/i.test(sql)||/;/.test(sql))throw Error('Read-only snapshot rejected');
+    const r=await fetch('https://api.cloudflare.com/client/v4/accounts/e76a3f504309ca9289d8dfa3ee504502/d1/database/e55c3b84-ea9a-48fd-a7a3-08253089d295/query',{
+      method:'POST',headers:{Authorization:`Bearer ${cfToken}`,'Content-Type':'application/json'},body:JSON.stringify({sql}),signal:AbortSignal.timeout(20000),
+    });
+    const body=await r.json();
+    if(!r.ok||body.success!==true||!Array.isArray(body.result?.[0]?.results))throw Error('Read-only snapshot failed');
+    return body.result[0].results;
+  };
+  const snapshot=await readStoppedInstallationSnapshot({repoDir:process.cwd(),query});
+  console.log('Stopped preparation snapshot (read only): '+JSON.stringify(snapshot));
   console.log(`Verified Japanese login HTML/JavaScript: ${origin}/login/`);
   console.log('Verified unauthenticated API=401, authenticated API=200, database healthy, outbound paused, accounts=0, followers=0.');
   console.log('Read-only smoke check: no message, Meta authentication, deployment or content change.');
