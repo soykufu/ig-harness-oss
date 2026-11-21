@@ -13,7 +13,8 @@ function validate(input,now){
  if(point<0||point>observed||observed-point>60000||observed>now||now>=point+MAX_AGE)throw Error('Recovery reference is stale or future dated');
  return{kind:input.kind,...RECOVERY_SCOPE,sourceSha:input.sourceSha,timestamp:input.timestamp,observedAt:input.observedAt,bookmark:input.bookmark,migrationInventoryHash:input.migrationInventoryHash,deploymentFingerprint:input.deploymentFingerprint};
 }
-function key(secret,salt){if(typeof secret!=='string'||! /^[\x21-\x7e]{32,4096}$/.test(secret))throw Error('Recovery key unavailable');return Buffer.from(hkdfSync('sha256',Buffer.from(secret,'utf8'),salt,Buffer.from(FORMAT),32));}
+export function recoveryKeyEligible(secret){return typeof secret==='string'&&/^[\x21-\x7e]{32,4096}$/.test(secret);}
+function key(secret,salt){if(!recoveryKeyEligible(secret))throw Error('Recovery key unavailable');return Buffer.from(hkdfSync('sha256',Buffer.from(secret,'utf8'),salt,Buffer.from(FORMAT),32));}
 function encode(value){return value.toString('base64url');}
 function decode(value,size){if(typeof value!=='string'||value.length>16384||!value.length||!/^[A-Za-z0-9_-]+$/.test(value))throw Error('Recovery envelope requires reconciliation');const buffer=Buffer.from(value,'base64url');if(encode(buffer)!==value||size&&buffer.length!==size)throw Error('Recovery envelope requires reconciliation');return buffer;}
 /** Pure preparation only. Caller-provided references are not live provider
