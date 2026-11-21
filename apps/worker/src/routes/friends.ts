@@ -1,3 +1,4 @@
+import { recruitmentSubjectHash } from '../services/recruitment-inbound-holds.js';
 import { messagingEligibility } from '../services/messaging-window.js';
 import { Hono } from 'hono';
 import {
@@ -412,6 +413,24 @@ friends.get('/api/friends/:id/messages', async (c) => {
     console.error('GET /api/friends/:id/messages error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
+});
+
+// Read-only review: no raw messages, identifiers, release or send capability.
+friends.get('/api/friends/:id/recruitment-holds', requireRole('owner','admin'), async c => {
+  c.header('Cache-Control','no-store');
+  const id=Number(c.req.param('id'));
+  if(!Number.isSafeInteger(id)||id<1)return c.json({success:false,error:'Invalid recipient'},400);
+  try {
+    const accountId=c.req.query('account_id');
+    const account=accountId?await c.env.DB.prepare('SELECT id FROM ig_accounts WHERE id=?').bind(accountId).first<{id:string}>():await c.env.DB.prepare('SELECT id FROM ig_accounts WHERE is_default=1 LIMIT 1').first<{id:string}>();
+    if(!account)return c.json({success:false,error:'not found'},404);
+    const friend=await c.env.DB.prepare('SELECT igsid FROM followers WHERE id=? AND account_id=?').bind(id,account.id).first<{igsid:string}>();
+    if(!friend?.igsid)return c.json({success:false,error:'not found'},404);
+    const rows=await c.env.DB.prepare(`SELECT state,COUNT(*) AS count,MIN(recorded_at_ms) AS oldestAtMs,MAX(recorded_at_ms) AS latestAtMs
+      FROM recruitment_inbound_holds WHERE account_id=? AND subject_hash=? GROUP BY state ORDER BY state`)
+      .bind(account.id,await recruitmentSubjectHash(account.id,friend.igsid)).all();
+    return c.json({success:true,data:{needsReview:rows.results.length>0,holds:rows.results,mayResume:false}});
+  } catch {return c.json({success:false,error:'相談の保留状態を取得できません。0件とは判断できません。'},503);}
 });
 
 // Reconcile a pending manual action without touching Meta or changing any lock.

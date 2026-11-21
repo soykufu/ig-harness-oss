@@ -150,6 +150,16 @@ function MessagePanel({ friendId, onBack }: {
   const [sending, setSending] = useState(false)
   const [checking, setChecking] = useState(false)
   const [deliveryNotice, setDeliveryNotice] = useState('')
+  const [holdNotice,setHoldNotice] = useState('相談・停止の記録を確認中…')
+  useEffect(()=>{
+    const ac=new AbortController()
+    setHoldNotice('相談・停止の記録を確認中…')
+    fetchApi<{success:boolean;data:{needsReview:boolean;holds:Array<{state:string;count:number}>}}>(`/api/friends/${friendId}/recruitment-holds`,{signal:ac.signal,cache:'no-store'})
+      .then(res=>{if(ac.signal.aborted)return;if(!res.success)throw new Error('Unavailable');setHoldNotice(res.data.needsReview?'相談・停止などの確認待ちがあります。自動案内は再開しません。':'受信保留の記録はありません。配信可能と判断したものではありません。')})
+      .catch(()=>{if(!ac.signal.aborted)setHoldNotice('相談・停止の記録を取得できません。保留なしとは判断できません。')})
+    return()=>ac.abort()
+  },[friendId])
+
   const [messages, setMessages] = useState<MessageLog[]>([])
   const [loading, setLoading] = useState(true)
   const isComposingRef = useRef(false)
@@ -298,6 +308,7 @@ function MessagePanel({ friendId, onBack }: {
       </div>
 
       <div className="px-3 py-2 border-t border-kumo-line bg-kumo-base shrink-0">
+        <p role="status" className="mb-2 text-xs text-kumo-subtle">{holdNotice}</p>
         <div className="flex gap-2">
           <input type="text" value={message} disabled={sending || checking}
             onChange={(e) => setMessage(e.target.value)}

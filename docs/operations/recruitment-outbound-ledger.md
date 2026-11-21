@@ -85,3 +85,8 @@ RECRUITMENT_INBOUND_SUPPRESSION=1の場合だけ署名/entry/account/App照合�
 ### コメント返信の最終照合（準備実装）
 
 強制台帳モードのprivate replyはcomment:<job-id>という安定操作キーと、同account/comment/followerのprocessing job・processing private_reply_attemptsを要求。コメント作成日時が既知かつ7日以内、liveでない、job期限/開始時刻/試行時刻/所有権・active metadata・持続的な相談/停止も最終再照合する。通常DMの24h窓を付け替えたりechoから開いたりしない。応答recipientも対応followerと照合。現物のjobにこのキーを渡す入口は未接続で、任意キーや時刻不明を通すものではない。既存の期限前Graph照会を理由に最終照合を省略しない。
+
+
+### 受信保留の読取表示（未配置）
+
+owner/admin限定GET /api/friends/:id/recruitment-holdsは、認証済みの対象accountと既存followerの組合せだけを読み、状態別件数/最古・最新時刻/needsReviewを返す。本文・生IGSID・イベントキー・subject_hashは返さない。個人削除済みsubjectなしのtombstoneは表示しない。応答はno-storeで設定補完や送信/解除を行わず、空でもmayResume=false。DB未適用/取得不能は503で0件とは扱わない。チャット画面へ確認待ち/記録なし/取得不能を表示し、会話切替時は以前の取得を中止する。実ブラウザ表示とMeta実機は未検証。人が相談へ返信する認証・操作単位の許可は次の独立残件。
