@@ -411,8 +411,9 @@ export async function getGateAnalytics(
   const lineLinked = await db
     .prepare(
       `SELECT COUNT(*) as n FROM gate_deliveries gd
-       JOIN followers f ON f.id = gd.follower_id
-       WHERE gd.gate_id = ? AND f.line_friend_uuid IS NOT NULL`,
+       JOIN engagement_gates g ON g.id = gd.gate_id
+       JOIN followers f ON f.id = gd.follower_id AND f.account_id = g.account_id
+       WHERE gd.gate_id = ? AND f.line_friend_uuid IS NOT NULL AND length(trim(f.line_friend_uuid)) > 0`,
     )
     .bind(gateId)
     .first<{ n: number }>();
