@@ -48,6 +48,7 @@ export async function reserveRecruitmentOutbound(db: D1Database, request: {
         + (SELECT COUNT(*) FROM recruitment_outbound_observations
           WHERE account_id=? AND sent_at_ms>? AND sent_at_ms<=?)
       ) < ?
+      AND NOT EXISTS (SELECT 1 FROM comment_rule_jobs WHERE account_id=? AND public_reply_status IN ('processing','uncertain'))
       AND NOT EXISTS (SELECT 1 FROM data_deletion_locks WHERE account_id=?)
     ON CONFLICT(account_id,operation_key) DO NOTHING
     RETURNING operation_key
@@ -56,7 +57,7 @@ export async function reserveRecruitmentOutbound(db: D1Database, request: {
     accountId, nowMs, nowMs - FRESH_MS,
     accountId, nowMs,
     accountId, nowMs - HOUR_MS, nowMs,
-    accountId, nowMs - HOUR_MS, nowMs, CAP, accountId).first();
+    accountId, nowMs - HOUR_MS, nowMs, CAP, accountId, accountId).first();
   return row !== null;
 }
 
@@ -86,6 +87,7 @@ export async function assertRecruitmentReservationReady(db: D1Database, input: {
       AND c.owner='harness' AND c.owner_epoch=? AND c.reconciled_at_ms BETWEEN ? AND ?
       AND EXISTS (SELECT 1 FROM integration_settings WHERE key='outbound_paused' AND value='0')
       AND NOT EXISTS (SELECT 1 FROM data_deletion_locks WHERE account_id=o.account_id)
+      AND NOT EXISTS (SELECT 1 FROM comment_rule_jobs j WHERE j.account_id=o.account_id AND j.public_reply_status IN ('processing','uncertain'))
       AND NOT EXISTS (SELECT 1 FROM recruitment_outbound_operations x WHERE x.account_id=o.account_id
         AND (x.state='uncertain' OR x.reserved_at_ms>? OR (x.state='reserved' AND x.reserved_at_ms<=?)))
       AND NOT EXISTS (SELECT 1 FROM recruitment_outbound_observations e WHERE e.account_id=o.account_id AND e.sent_at_ms>?)

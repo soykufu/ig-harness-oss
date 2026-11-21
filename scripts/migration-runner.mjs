@@ -145,7 +145,7 @@ export async function verifyLatestSchema(query) {
     broadcast_recipients: ['broadcast_id','follower_id','status'],
     webhook_events: ['account_id','event_key','subject_id','status'],
     rate_limit_buckets: ['bucket_key','hits','expires_at'],
-    comment_rule_jobs: ['id','account_id','follower_id','status'],
+    comment_rule_jobs: ['id','account_id','follower_id','status','public_reply_status','public_reply_id','reply_text','reply_mode','media_id','public_reply_plan_hash','public_reply_owner_epoch','public_reply_claimed_at'],
     data_deletion_requests: ['code','request_hash','status'],
     tracked_links: ['destination_url','ref_code','tag_id','scenario_id','is_active','updated_at'],
     link_clicks: ['link_id','follower_id'],

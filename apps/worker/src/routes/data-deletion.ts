@@ -83,7 +83,7 @@ dataDeletion.post('/api/data-deletion/:code/resolve', requireRole('owner'), asyn
   // No ambiguous send may remain in flight while data is being removed.
   const busy = await db.prepare(`SELECT 1 FROM broadcast_recipients r JOIN followers f ON f.id=r.follower_id WHERE f.account_id=? AND r.status='processing'
     UNION ALL SELECT 1 FROM webhook_events WHERE account_id=? AND status='processing'
-    UNION ALL SELECT 1 FROM comment_rule_jobs WHERE account_id=? AND status='processing'
+    UNION ALL SELECT 1 FROM comment_rule_jobs WHERE account_id=? AND (status='processing' OR public_reply_status IN ('processing','uncertain'))
     UNION ALL SELECT 1 FROM recruitment_outbound_operations WHERE account_id=? AND state IN ('reserved','uncertain')
     UNION ALL SELECT 1 FROM recruitment_manual_intents WHERE account_id=? AND status IN ('claimed','uncertain')
     UNION ALL SELECT 1 FROM recruitment_human_reply_contracts WHERE account_id=? AND status IN ('claimed','uncertain')

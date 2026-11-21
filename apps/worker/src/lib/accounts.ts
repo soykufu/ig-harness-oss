@@ -1,3 +1,4 @@
+import {assertRecruitmentPublicReplyReady} from '../services/recruitment-public-reply.js';
 import {type RecruitmentRichTest} from '../services/recruitment-rich-test.js';
 import type {HumanReplyInput} from '../services/recruitment-human-reply.js';
 import { readAppSecret, type CredentialEnv } from './credential-crypto.js';
@@ -225,9 +226,12 @@ export async function getAccountClient(
       }
       return rewriteTrackedMessage(env, igsid, message);
     },
-    beforeMutation:async({path,body})=>{
+    beforeMutation:async({method,path,body})=>{
       await guard();
-      if(env.RECRUITMENT_LEDGER_ENFORCEMENT==='1'&&(!path.endsWith('/messages')||!body||typeof body!=='object'||!('message' in body)))throw Error('Recruitment mutation purpose is not connected');
+      if(env.RECRUITMENT_LEDGER_ENFORCEMENT==='1'&&(!path.endsWith('/messages')||!body||typeof body!=='object'||!('message' in body))){
+        if(options.recruitmentOperation?.key.startsWith('comment-public:'))await assertRecruitmentPublicReplyReady(db,account.id,options.recruitmentOperation,{method,path,body});
+        else throw Error('Recruitment mutation purpose is not connected');
+      }
     },
     beforeRequest:()=>{if(blockedUntil>Date.now())throw new InstagramApiError('Instagram API is cooling down',429,613,undefined,blockedUntil-Date.now());},
     onResponse:async observation=>{
@@ -246,8 +250,8 @@ export async function getAccountClient(
 export function recruitmentJobClientFactory(env: AccountEnv | undefined, db: D1Database, account: IgAccount) {
   if (env?.RECRUITMENT_LEDGER_ENFORCEMENT !== '1') return undefined;
   return async (key: string, definitionVersion?: string, subjectVersion?:string): Promise<InstagramClient> => {
-    if (!/^(comment|comment-dm|step|broadcast):.+/.test(key) || key.length > 500) throw new Error('Invalid comment operation identity');
-    if ((key.startsWith('step:') || key.startsWith('broadcast:')) && !/^[a-f0-9]{64}$/.test(definitionVersion??'')) throw new Error('Step version evidence required');
+    if (!/^(comment|comment-dm|comment-public|step|broadcast):.+/.test(key) || key.length > 500) throw new Error('Invalid comment operation identity');
+    if ((key.startsWith('step:') || key.startsWith('broadcast:') || key.startsWith('comment-public:')) && !/^[a-f0-9]{64}$/.test(definitionVersion??'')) throw new Error('Step version evidence required');
     if (key.startsWith('step:') && !/^[a-f0-9]{64}$/.test(subjectVersion??'')) throw Error('Step substitution evidence required');
     const now = Date.now();
     const control = await db.prepare(`SELECT owner_epoch FROM recruitment_outbound_control WHERE account_id=? AND owner='harness' AND reconciled_at_ms BETWEEN ? AND ?`)

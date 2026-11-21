@@ -86,6 +86,13 @@ it.each(['reserved','uncertain'])('keeps deletion pending while an outbound oper
   expect(sqlite.prepare('SELECT status FROM data_deletion_requests').get()?.status).toBe('pending_identity');
   expect(sqlite.prepare('SELECT state FROM recruitment_outbound_operations').get()?.state).toBe(state);
 });
+it.each(['processing','uncertain'])('keeps deletion pending for a public phase whose private DM has finished: %s',async state=>{
+ const {request,sqlite}=await fixture();const response=await(await request('/data-deletion',{method:'POST',body:new URLSearchParams({signed_request:await signed('app-secret')})})).json() as any;
+ sqlite.exec("INSERT INTO ig_accounts(id,ig_user_id,access_token,created_at,updated_at) VALUES('a','111','test','2026-01-01','2026-01-01'); INSERT INTO followers(id,igsid,account_id) VALUES(1,'student','a')");
+ sqlite.prepare("INSERT INTO comment_rule_jobs(id,account_id,follower_id,comment_id,message_type,body,due_at,expires_at,status,public_reply_status) VALUES('public','a',1,'comment','text','{}','2026-01-01','2030-01-01','sent',?)").run(state);
+ const res=await request(`/api/data-deletion/${response.confirmation_code}/resolve`,{method:'POST',headers:{Authorization:'Bearer owner-key','Content-Type':'application/json'},body:JSON.stringify({accountId:'a',identityVerified:true})});
+ expect(res.status).toBe(409);expect(sqlite.prepare('SELECT COUNT(*) n FROM followers').get()?.n).toBe(1);expect(sqlite.prepare('SELECT status FROM data_deletion_requests').get()?.status).toBe('pending_identity');
+});
 it('purges the new outbound ledger only for the verified business account', async () => {
   const { request, sqlite } = await fixture();
   const response = await (await request('/data-deletion', { method: 'POST', body: new URLSearchParams({ signed_request: await signed('app-secret') }) })).json() as any;

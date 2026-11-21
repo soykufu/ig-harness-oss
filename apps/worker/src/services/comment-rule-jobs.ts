@@ -1,3 +1,4 @@
+import {claimRecruitmentPublicReply,recruitmentPublicReplyVersion} from './recruitment-public-reply.js';
 import { InstagramApiError, InstagramTransportError, type InstagramClient } from '@ig-harness/ig-sdk';
 import { deliveryFailure, sendIgMessage, validateBroadcastMessage } from './broadcast.js';
 import { messagingEligibility } from './messaging-window.js';
@@ -70,7 +71,7 @@ export async function resumeCommentJobs(db: D1Database, followerId: number, acco
             await db.prepare("UPDATE follower_scenarios SET next_step_at=?,end_reason=NULL WHERE id=? AND end_reason='awaiting_inbound'").bind(new Date(Date.now() + step.delay_minutes * 60000).toISOString(), row.id).run();
     }
 }
-export type CommentJobClientFactory = (operationKey: string) => Promise<InstagramClient>;
+export type CommentJobClientFactory = (operationKey: string, definitionVersion?:string) => Promise<InstagramClient>;
 export async function processCommentRuleJobs(db: D1Database, client: InstagramClient, accountId: string, clientForOperation?: CommentJobClientFactory): Promise<void> {
     // Operator stop switch: jobs stay pending, they resume after unpausing.
     if (await isOutboundPaused(db)) return;
@@ -144,7 +145,7 @@ export async function processCommentRuleJobs(db: D1Database, client: InstagramCl
             continue;
         }
         if (job.reply_text && job.delivery_mode === 'private_reply')
-            await postPublicReply(db, client, accountId, job);
+            await postPublicReply(db, client, accountId, job, clientForOperation);
     }
 }
 
@@ -165,24 +166,35 @@ const PRIVATE_REPLY_OUTCOME_MESSAGES: Record<string, string> = {
  * comment (POST /{comment-id}/replies); 'mention' keeps the legacy top-level
  * @username comment on the media. Neither bypasses Meta permissions.
  */
-async function postPublicReply(db: D1Database, client: Pick<InstagramClient, 'replyToComment' | 'postCommentToMedia'>, accountId: string, job: CommentJob): Promise<void> {
+async function postPublicReply(db: D1Database, client: Pick<InstagramClient, 'replyToComment' | 'postCommentToMedia'>, accountId: string, job: CommentJob, clientForOperation?:CommentJobClientFactory): Promise<void> {
     const mode = normalizeReplyMode(job.reply_mode) === 'mention' && job.media_id ? 'mention' : 'thread';
-    let result: unknown;
+    let result: unknown;let claimed=false;
     try {
+        if(await isOutboundPaused(db))return;
+        let sender=client;
+        if(clientForOperation){
+          const version=await recruitmentPublicReplyVersion(accountId,job);
+          const phase=await claimRecruitmentPublicReply(db,accountId,job.id,version,true);
+          claimed=true;sender=await clientForOperation(phase.key,version);
+        }else{
+          const claim=await db.prepare("UPDATE comment_rule_jobs SET public_reply_status='processing' WHERE id=? AND account_id=? AND public_reply_status IS NULL RETURNING id").bind(job.id,accountId).first();
+          if(!claim)return;claimed=true;
+        }
         result = mode === 'mention'
-            ? await client.postCommentToMedia(job.media_id!, job.reply_text!)
-            : await client.replyToComment(job.comment_id, job.reply_text!);
+            ? await sender.postCommentToMedia(job.media_id!, job.reply_text!)
+            : await sender.replyToComment(job.comment_id, job.reply_text!);
+        if(typeof (result as {id?:unknown}|null)?.id!=='string'||!(result as {id:string}).id)throw Error('Public reply acknowledgement missing');
     }
     catch (error) {
         const detail = describeFailure(error);
-        await db.prepare("UPDATE comment_rule_jobs SET public_reply_status='failed',public_reply_error_code=?,public_reply_error_message=? WHERE id=?")
-            .bind(detail.errorCode, detail.message, job.id).run()
+        await db.prepare("UPDATE comment_rule_jobs SET public_reply_status=?,public_reply_error_code=?,public_reply_error_message=? WHERE id=? AND public_reply_status IS ?")
+            .bind(claimed?(error instanceof InstagramApiError&&error.status<500?'failed':'uncertain'):'held',detail.errorCode, detail.message, job.id,claimed?'processing':null).run()
             .catch(() => console.warn('[comment-rule-jobs] could not record public reply failure'));
         await recordDeliveryFailure(db, { accountId, source: 'public_reply', stage: mode === 'mention' ? 'media_comment' : 'comment_replies', refId: job.id, followerId: job.follower_id, error });
         return;
     }
     // The reply is already public: a bookkeeping error must not be logged as a failed reply.
-    await db.prepare("UPDATE comment_rule_jobs SET public_reply_status='sent',public_reply_id=?,public_reply_error_code=NULL,public_reply_error_message=NULL WHERE id=?")
+    await db.prepare("UPDATE comment_rule_jobs SET public_reply_status='sent',public_reply_id=?,public_reply_error_code=NULL,public_reply_error_message=NULL WHERE id=? AND public_reply_status='processing'")
         .bind((result as { id?: string } | undefined)?.id ?? null, job.id).run()
         .catch(() => console.warn('[comment-rule-jobs] could not record public reply success'));
 }
