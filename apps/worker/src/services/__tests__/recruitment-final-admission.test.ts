@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { InstagramClient } from '@ig-harness/ig-sdk';
 import { testDatabase } from '../../test-utils/d1.js';
+import { ingestRecruitmentInboundHolds } from '../recruitment-inbound-holds.js';
 import { recruitmentMessageLifecycle } from '../recruitment-message-lifecycle.js';
 const NOON = Date.parse('2026-11-20T03:00:00Z');
 const cleanup: (()=>void)[]=[];
@@ -77,3 +78,36 @@ it.each(['consulting','stopped','declined','hold','missing','malformed','expired
     expect(fetch).not.toHaveBeenCalled();
     expect(sqlite.prepare('SELECT state FROM recruitment_outbound_operations').get()?.state).toBe('uncertain');
   });
+
+it('rechecks signed inbound holds arriving during async preparation even with active metadata',async()=>{
+ const {db,fetch,make}=await fixture();
+ await expect(make(async()=>{await ingestRecruitmentInboundHolds(db,{id:'a',ig_user_id:'111'},[{kind:'messaging',value:{sender:{id:'student'},recipient:{id:'111'},timestamp:NOON,message:{mid:'stop-now',text:'停止'}}}],NOON);}).sendText('student','test')).rejects.toThrow('human review');
+ expect(fetch).not.toHaveBeenCalled();
+});
+
+async function privateFixture(){
+ const f=await fixture();const t=new Date(NOON).toISOString();
+ f.sqlite.prepare("INSERT INTO comment_rule_jobs(id,account_id,follower_id,comment_id,message_type,body,due_at,expires_at,status,started_at,delivery_mode,comment_created_at) VALUES('job','a',1,'comment','text','{}',?,?,'processing',?,'private_reply',?)").run(t,new Date(NOON+86400000).toISOString(),t,t);
+ f.sqlite.prepare("INSERT INTO private_reply_attempts(account_id,comment_id,follower_id,status,attempted_at) VALUES('a','comment',1,'processing',?)").run(t);
+ return f;
+}
+it('uses a claimed comment job and its separate 7-day policy without opening a DM window',async()=>{
+ const {sqlite,fetch,make}=await privateFixture();sqlite.prepare('UPDATE followers SET last_inbound_at=?').run(new Date(NOON-2*86400000).toISOString());
+ await make(()=>{},'comment:job').sendPrivateReply('comment','test');expect(fetch).toHaveBeenCalledTimes(1);
+});
+it.each(['expired','future','missing-created','live','job-stopped','attempt-sent','stale-claim','wrong-job','standby'])(
+ 'blocks private reply when %s changes during preparation',async change=>{
+ const {sqlite,fetch,make}=await privateFixture();
+ const mutate=()=>{
+   if(change==='expired')sqlite.prepare('UPDATE comment_rule_jobs SET comment_created_at=?').run(new Date(NOON-7*86400000).toISOString());
+   if(change==='future')sqlite.prepare('UPDATE comment_rule_jobs SET comment_created_at=?').run(new Date(NOON+1).toISOString());
+   if(change==='missing-created')sqlite.exec('UPDATE comment_rule_jobs SET comment_created_at=NULL');
+   if(change==='live')sqlite.exec('UPDATE comment_rule_jobs SET is_live=1');
+   if(change==='job-stopped')sqlite.exec("UPDATE comment_rule_jobs SET status='skipped'");
+   if(change==='attempt-sent')sqlite.exec("UPDATE private_reply_attempts SET status='sent'");
+   if(change==='stale-claim')sqlite.prepare('UPDATE private_reply_attempts SET attempted_at=?').run(new Date(NOON-60001).toISOString());
+   if(change==='wrong-job')sqlite.exec("UPDATE comment_rule_jobs SET comment_id='other'");
+   if(change==='standby')sqlite.exec("UPDATE followers SET messaging_owner='standby'");
+ };
+ await expect(make(mutate,'comment:job').sendPrivateReply('comment','test')).rejects.toThrow();expect(fetch).not.toHaveBeenCalled();
+});

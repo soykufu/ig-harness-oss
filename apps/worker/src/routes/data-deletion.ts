@@ -1,3 +1,4 @@
+import { recruitmentSubjectHash } from '../services/recruitment-inbound-holds.js';
 import { readAppSecret } from '../lib/credential-crypto.js';
 import { Hono } from 'hono';
 import { listIgAccounts } from '@ig-harness/db';
@@ -94,9 +95,13 @@ dataDeletion.post('/api/data-deletion/:code/resolve', requireRole('owner'), asyn
   // Raw event payload can contain the subject even before a follower exists.
   // Remove payloads for this account and retain dedup keys to prevent replay.
   statements.push(db.prepare(`UPDATE webhook_events SET payload=NULL, subject_id=NULL, status='completed', finished_at=? WHERE account_id=?${scoped ? ` AND subject_id IN (SELECT igsid FROM followers WHERE ${condition})` : ''}`).bind(new Date().toISOString(), account.id, ...(scoped ? values : [])));
+  if(scoped) {
+    const subject=await db.prepare('SELECT igsid FROM followers WHERE account_id=? AND id=?').bind(account.id,body.followerId!).first<{igsid:string}>();
+    if(subject?.igsid)statements.push(db.prepare('UPDATE recruitment_inbound_holds SET subject_hash=NULL WHERE account_id=? AND subject_hash=?').bind(account.id,await recruitmentSubjectHash(account.id,subject.igsid)));
+  }
   statements.push(db.prepare(`DELETE FROM followers WHERE ${condition}`).bind(...values));
   if (!scoped) {
-    for (const table of ['media_posts', 'broadcasts', 'engagement_gates', 'scenarios', 'forms', 'tracked_links', 'tags', 'rich_messages', 'comment_rules', 'delivery_failures', 'recruitment_manual_intents', 'recruitment_outbound_operations', 'recruitment_echo_receipts', 'recruitment_outbound_observations', 'recruitment_outbound_control']) {
+    for (const table of ['media_posts', 'broadcasts', 'engagement_gates', 'scenarios', 'forms', 'tracked_links', 'tags', 'rich_messages', 'comment_rules', 'delivery_failures', 'recruitment_inbound_holds', 'recruitment_manual_intents', 'recruitment_outbound_operations', 'recruitment_echo_receipts', 'recruitment_outbound_observations', 'recruitment_outbound_control']) {
       statements.push(db.prepare(`DELETE FROM ${table} WHERE account_id=?`).bind(account.id));
     }
     // Keep the account tombstone so a stale env token cannot recreate it.

@@ -1,3 +1,4 @@
+import {sha256} from '../../lib/security.js';
 import { afterEach, it, expect, vi } from 'vitest';
 import worker from '../../index.js';
 import { testDatabase } from '../../test-utils/d1.js';
@@ -59,8 +60,12 @@ it('verifies deletion HMAC, records a truthful status and purges only the verifi
   expect(await (await request(`/data-deletion?code=${body.confirmation_code}`)).text()).toContain('not yet been deleted');
   const again = await (await request('/data-deletion', { method: 'POST', body: new URLSearchParams({ signed_request: raw }) })).json() as any; expect(again.confirmation_code).toBe(body.confirmation_code);
   sqlite.exec("INSERT INTO ig_accounts(id,ig_user_id,access_token,created_at,updated_at) VALUES('a','111','test','2026-01-01','2026-01-01'); INSERT INTO followers(id,igsid,account_id) VALUES(1,'456','a'),(2,'789','a'); INSERT INTO messages_log(follower_id,direction,message_type,body) VALUES(1,'in','text','private'),(2,'in','text','keep')");
+  const removedHash=await sha256(JSON.stringify(['a','456']));
+  const keptHash=await sha256(JSON.stringify(['a','789']));
+  sqlite.prepare("INSERT INTO recruitment_inbound_holds VALUES('a','removed',?,'stopped',0,0),('a','kept',?,'consulting',0,0)").run(removedHash,keptHash);
   const resolve = await request(`/api/data-deletion/${body.confirmation_code}/resolve`, { method: 'POST', headers: { Authorization: 'Bearer owner-key', 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId: 'a', followerId: 1, identityVerified: true }) });
   expect(resolve.status).toBe(200); expect(sqlite.prepare('SELECT id FROM followers').all()).toEqual([{ id: 2 }]); expect(sqlite.prepare('SELECT body FROM messages_log').get()).toMatchObject({ body: 'keep' });
+  expect(sqlite.prepare('SELECT event_key,subject_hash FROM recruitment_inbound_holds ORDER BY event_key').all()).toEqual([{event_key:'kept',subject_hash:keptHash},{event_key:'removed',subject_hash:null}]);
   expect(await (await request(`/data-deletion?code=${body.confirmation_code}`)).text()).toContain('Deletion completed');
 });
 it('encrypts tokens with random IVs and account binding; wrong keys cannot decrypt', async () => {
@@ -90,10 +95,11 @@ it('purges the new outbound ledger only for the verified business account', asyn
     sqlite.prepare("INSERT INTO recruitment_outbound_operations VALUES(?,'operation','epoch',0,'sent','message')").run(id);
     sqlite.prepare("INSERT INTO recruitment_outbound_observations VALUES(?,'message',0,0)").run(id);
     sqlite.prepare("INSERT INTO recruitment_echo_receipts VALUES(?,'message',0,0,0)").run(id);
+    sqlite.prepare("INSERT INTO recruitment_inbound_holds VALUES(?,'event','subject','stopped',0,0)").run(id);
   }
   const resolved = await request(`/api/data-deletion/${response.confirmation_code}/resolve`, { method: 'POST', headers: { Authorization: 'Bearer owner-key', 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId: 'a', identityVerified: true }) });
   expect(resolved.status).toBe(200);
-  for (const table of ['recruitment_outbound_control','recruitment_outbound_operations','recruitment_outbound_observations','recruitment_echo_receipts']) {
+  for (const table of ['recruitment_outbound_control','recruitment_outbound_operations','recruitment_outbound_observations','recruitment_echo_receipts','recruitment_inbound_holds']) {
     expect(sqlite.prepare(`SELECT account_id FROM ${table}`).all()).toEqual([{ account_id: 'b' }]);
   }
   expect(sqlite.prepare("SELECT is_active FROM ig_accounts WHERE id='a'").get()?.is_active).toBe(0);

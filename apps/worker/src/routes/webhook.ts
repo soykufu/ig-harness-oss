@@ -1,4 +1,5 @@
 import { readAppSecret, type CredentialEnv } from '../lib/credential-crypto.js';
+import { ingestRecruitmentInboundHolds, InvalidRecruitmentInbound, RecruitmentInboundBusy } from '../services/recruitment-inbound-holds.js';
 import { messagingEligibility } from '../services/messaging-window.js';
 import { armScheduler } from '../lib/scheduler-client.js';
 import { beginActivity, endActivity } from '../lib/activity.js';
@@ -162,6 +163,14 @@ webhook.post('/webhook', async (c) => {
       catch (error) {
         if (error instanceof InvalidRecruitmentEcho) return c.json({ error: 'Invalid outgoing message metadata' }, 400);
         if (error instanceof RecruitmentEchoBusy) return c.json({ error: 'Data deletion is in progress' }, 503);
+        throw error;
+      }
+    }
+    if(c.env.RECRUITMENT_INBOUND_SUPPRESSION==='1') {
+      try {await ingestRecruitmentInboundHolds(db,account,events);}
+      catch(error) {
+        if(error instanceof InvalidRecruitmentInbound)return c.json({error:'Invalid incoming identity'},400);
+        if(error instanceof RecruitmentInboundBusy)return c.json({error:'Data deletion is in progress'},503);
         throw error;
       }
     }

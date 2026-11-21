@@ -1,5 +1,9 @@
+import { assertRecruitmentBusinessState } from './recruitment-business-state.js';
+export { assertRecruitmentBusinessState } from './recruitment-business-state.js';
+import { assertRecruitmentPrivateReplyReady } from './recruitment-private-admission.js';
 import type { MessageLifecycle } from '@ig-harness/ig-sdk';
 import { reserveRecruitmentOutbound, acknowledgeRecruitmentOutbound, markRecruitmentOutboundUncertain, assertRecruitmentReservationReady } from './recruitment-outbound-ledger.js';
+import { assertNoRecruitmentInboundHold } from './recruitment-inbound-holds.js';
 import { messagingEligibility } from './messaging-window.js';
 
 /** Each client belongs to ONE durable operation. Rich blocks get distinct
@@ -13,6 +17,7 @@ export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
   let failed = false;
   let inFlight = false;
   let expectedRecipient: string | undefined;
+  let expectedCommentId: string | undefined;
   return {
     async before(payload) {
       if (failed || inFlight || !operation?.key || !operation.ownerEpoch) throw new Error('Recruitment operation is unavailable');
@@ -27,6 +32,7 @@ export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
           throw new Error('Recruitment reservation denied');
         }
         expectedRecipient = payload.recipient?.id;
+        expectedCommentId = payload.recipient?.comment_id;
         return key;
       } catch (error) { failed = true; inFlight = false; throw error; }
     },
@@ -43,7 +49,10 @@ export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
         const follower = await db.prepare('SELECT id,metadata FROM followers WHERE account_id=? AND igsid=?').bind(accountId,expectedRecipient).first<{id:number;metadata:string}>();
         if (!follower || await messagingEligibility(db,follower.id,accountId,nowMs)!=='eligible') throw new Error('Recruitment recipient is not eligible');
         assertRecruitmentBusinessState(follower.metadata, operation.ownerEpoch, nowMs);
-      }
+        await assertNoRecruitmentInboundHold(db,accountId,expectedRecipient);
+      } else if(expectedCommentId) {
+        expectedRecipient=await assertRecruitmentPrivateReplyReady(db,accountId,expectedCommentId,operation,nowMs);
+      } else { throw new Error('Recruitment recipient identity missing'); }
     },
     async acknowledged(ticket, response) {
       const result = response as { message_id?: unknown; recipient_id?: unknown } | null;
@@ -60,17 +69,3 @@ export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
   };
 }
 
-/** Suppression evidence only; never grants consent, a DM window or quota.
- * Missing/stale/unrecognised state is held. A verified state synchronizer must
- * supply this namespace; importing a follower is not permission to send.
- */
-export function assertRecruitmentBusinessState(metadata: string, ownerEpoch: string, nowMs: number): void {
-  let state: any;
-  try { state = JSON.parse(metadata)?.recruitment_delivery; } catch { /* deny below */ }
-  if (!state || state.state !== 'active' || state.owner_epoch !== ownerEpoch
-    || !Number.isSafeInteger(state.observed_at_ms) || !Number.isSafeInteger(state.valid_until_ms)
-    || state.observed_at_ms > nowMs || state.observed_at_ms < nowMs - 300_000
-    || state.valid_until_ms <= nowMs || state.valid_until_ms > state.observed_at_ms + 300_000) {
-    throw new Error('Recruitment business state requires reconciliation');
-  }
-}

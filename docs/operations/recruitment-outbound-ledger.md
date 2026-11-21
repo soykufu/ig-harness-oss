@@ -74,3 +74,14 @@ SDKはtracking変換・リンク生成・appsecret proof・本文シリアライ
 強制台帳モードの通常DMは、リンク変換等が終わった実fetch直前にfollowers.metadataのrecruitment_deliveryを再読する。state=active、owner_epoch一致、observed_at_msが未来でなく5分以内、valid_until_msが現在より後かつ観測から5分以内である必要がある。相談consulting・停止stopped・辞退declined・hold・欠落・不正JSON・期限切れ・未知の値はすべて保留。既存importにactiveを一括補完しない。この状態は同意/特典配布許可/24h窓/通数の代替ではない。
 
 この記録を実際の相談/辞退/停止イベントから正規同期する処理・管理手順は未接続。コード追加だけで相談後停止が本番完成したとは扱わない。private replyは通常DMとは別経路で最終条件接続が残る。新フラグ無効・本番未配置・送信停止は維持する。
+
+
+### 署名済み受信からの持続的な抑止（0031・未配置）
+
+RECRUITMENT_INBOUND_SUPPRESSION=1の場合だけ署名/entry/account/App照合後に受信抑止を保存し、完了前にWebhookを200としない。相談テキストはconsulting、明確な停止・辞退はstopped/declined、未知のpostback・添付はholdとして有人確認へ。一般の会話を勝手に同意・配布許可へ変換しない。返信や再開という文字から自動復活しない。MID（無いpostbackは完全イベント）のハッシュでmessaging/standby再送を重複排除。accountと送信者の組合せのハッシュ・分類・時刻だけ保存し本文/生IGSIDは保存しない。候補者行の作成前にも保持。通常受信キューとは別で、最終受信や同意の更新ではない。
+
+通常DMの最終送信判定はこの持続的抑止も再読する。metadataをactiveに戻すだけでは解除できない。個人削除時には対象subject_hashを消して再送防止キーだけを残し、同じWebhookの再送で個人対応を復元しない。事業account削除では当該account分を削除。解除/相談解決の認証済み手順・有人返信の限定許可と管理画面への表示は次の残件。新フラグ既定無効・未配置・送信停止を維持する。
+
+### コメント返信の最終照合（準備実装）
+
+強制台帳モードのprivate replyはcomment:<job-id>という安定操作キーと、同account/comment/followerのprocessing job・processing private_reply_attemptsを要求。コメント作成日時が既知かつ7日以内、liveでない、job期限/開始時刻/試行時刻/所有権・active metadata・持続的な相談/停止も最終再照合する。通常DMの24h窓を付け替えたりechoから開いたりしない。応答recipientも対応followerと照合。現物のjobにこのキーを渡す入口は未接続で、任意キーや時刻不明を通すものではない。既存の期限前Graph照会を理由に最終照合を省略しない。
