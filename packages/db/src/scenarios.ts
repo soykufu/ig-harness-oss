@@ -323,8 +323,10 @@ export async function enrollFriendInScenario(
     .first<{ step_order: number; delay_minutes: number }>();
 
   if(recruitment){
-    const at=Date.now();
-    const next=firstStep?enforceWindow(await getDeliveryWindowJst(db),new Date(at+9*3600000+firstStep.delay_minutes*60000)).toISOString().slice(0,-1)+'+09:00':null;
+    const window=firstStep?await getDeliveryWindowJst(db):null;
+    const at=Date.now(),hour=new Date(at+9*3600000).getUTCHours();
+    if(hour<8||hour>=21)throw Error('Recruitment enrollment requires reconciliation');
+    const next=firstStep?enforceWindow(window!,new Date(at+9*3600000+firstStep.delay_minutes*60000)).toISOString().slice(0,-1)+'+09:00':null;
     const eligible=`EXISTS(SELECT 1 FROM followers f JOIN scenarios s ON s.account_id=f.account_id AND s.id=? AND s.is_active=1
       JOIN ig_accounts a ON a.id=f.account_id AND a.is_active=1
       JOIN recruitment_outbound_control c ON c.account_id=f.account_id AND c.owner='harness' AND c.owner_epoch=? AND c.reconciled_at_ms BETWEEN ? AND ?
