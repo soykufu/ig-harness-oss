@@ -668,7 +668,7 @@ async function sendFollowupStep(
   }else actions.push({type:'text',text:expandedText});
   if(guarded){
     const messages=actions.map(richActionMessage),payloadVersion=await gateFollowupPayloadVersion(messages);
-    const prepared=await db.prepare("UPDATE gate_deliveries SET metadata=json_set(metadata,'$.recruitment_followup.payload',?) WHERE id=? AND status='delivered' AND end_reason='delivery_in_progress' AND followup_step_sent=? AND json_extract(metadata,'$.recruitment_followup.version')=? AND json_extract(metadata,'$.recruitment_followup.payload') IS NULL RETURNING id").bind(payloadVersion,guarded.delivery.id,guarded.delivery.followup_step_sent,guarded.version).first();
+    const prepared=await db.prepare("UPDATE gate_deliveries SET metadata=json_set(metadata,'$.recruitment_followup.payload',?,'$.recruitment_followup.expected_messages',?) WHERE id=? AND status='delivered' AND end_reason='delivery_in_progress' AND followup_step_sent=? AND json_extract(metadata,'$.recruitment_followup.version')=? AND json_extract(metadata,'$.recruitment_followup.payload') IS NULL RETURNING id").bind(payloadVersion,messages.length,guarded.delivery.id,guarded.delivery.followup_step_sent,guarded.version).first();
     if(!prepared)throw Error('Gate follow-up preparation changed');
     const proof:GateFollowupProof={deliveryId:guarded.delivery.id,stepIndex:guarded.delivery.followup_step_sent,followerId:guarded.delivery.follower_id,igsid,definitionVersion:guarded.version,messages,payloadVersion};
     igClient=await guarded.factory(gateFollowupKey(proof.deliveryId,proof.stepIndex),guarded.version,undefined,proof);

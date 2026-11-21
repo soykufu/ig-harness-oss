@@ -29,10 +29,10 @@ async function ready(db:D1Database,accountId:string,proof:GatePostbackProof,now:
  JOIN recruitment_outbound_control c ON c.account_id=o.account_id AND c.owner='harness' AND c.owner_epoch=o.owner_epoch AND c.reconciled_at_ms BETWEEN ? AND ?
  JOIN gate_deliveries d ON d.id=o.delivery_id AND d.end_reason='delivery_in_progress'
  JOIN webhook_events e ON e.account_id=o.account_id AND e.event_key=o.event_key AND e.kind='messaging' AND e.status='processing' AND e.subject_id=f.igsid
- WHERE o.account_id=? AND o.operation_key=? AND o.delivery_id=? AND o.follower_id=? AND o.event_key=? AND o.phase=? AND o.loop_count=? AND o.definition_version=? AND o.payload_version IS ? AND o.state='claimed' AND o.claimed_at_ms BETWEEN ? AND ?
+ WHERE o.account_id=? AND o.operation_key=? AND o.delivery_id=? AND o.follower_id=? AND o.event_key=? AND o.phase=? AND o.loop_count=? AND o.definition_version=? AND o.payload_version IS ? AND o.expected_messages IS ? AND o.state='claimed' AND o.claimed_at_ms BETWEEN ? AND ?
  AND EXISTS(SELECT 1 FROM integration_settings WHERE key='outbound_paused' AND value='0')
  AND json_extract(e.payload,'$.sender.id')=f.igsid AND json_extract(e.payload,'$.postback.payload')='CHECK_FOLLOW:'||d.gate_id||':'||d.id
- AND NOT EXISTS(SELECT 1 FROM data_deletion_locks WHERE account_id=o.account_id)`).bind(proof.igsid,now-60000,now,accountId,gatePostbackKey(proof),proof.deliveryId,proof.followerId,proof.eventKey,proof.phase,proof.loopCount,proof.definitionVersion,proof.payloadVersion||null,now-60000,now).first<{metadata:string;owner_epoch:string}>();
+ AND NOT EXISTS(SELECT 1 FROM data_deletion_locks WHERE account_id=o.account_id)`).bind(proof.igsid,now-60000,now,accountId,gatePostbackKey(proof),proof.deliveryId,proof.followerId,proof.eventKey,proof.phase,proof.loopCount,proof.definitionVersion,proof.payloadVersion||null,proof.messages.length||null,now-60000,now).first<{metadata:string;owner_epoch:string}>();
  if(!row||await messagingEligibility(db,proof.followerId,accountId,now)!=='eligible')throw Error('Gate postback requires reconciliation');
  assertRecruitmentBusinessState(row.metadata,row.owner_epoch,now);await assertNoRecruitmentInboundHold(db,accountId,proof.igsid);
  return{gate,delivery};
@@ -71,7 +71,7 @@ export async function handleRecruitmentGatePostback(db:D1Database,client:Client,
   if(!inserted)throw Error('Gate phase already claimed');
   await ready(db,input.accountId,proof,Date.now());
   if(!follows&&gate.max_loops>0&&delivery.loop_count+1>gate.max_loops){
-   await db.batch([db.prepare("UPDATE recruitment_gate_operations SET state='skipped' WHERE account_id=? AND operation_key=? AND state='claimed'").bind(input.accountId,key),db.prepare("UPDATE gate_deliveries SET status='dropped',end_reason=NULL,last_check_at=? WHERE id=? AND end_reason='delivery_in_progress'").bind(new Date().toISOString(),delivery.id)]);return;
+   await db.batch([db.prepare("UPDATE recruitment_gate_operations SET state='skipped',expected_messages=0 WHERE account_id=? AND operation_key=? AND state='claimed'").bind(input.accountId,key),db.prepare("UPDATE gate_deliveries SET status='dropped',end_reason=NULL,last_check_at=? WHERE id=? AND end_reason='delivery_in_progress'").bind(new Date().toISOString(),delivery.id)]);return;
   }
   const rewardUrl=input.workerBaseUrl&&gate.reward_url?await wrapClickTracking(input.workerBaseUrl,gate.id,gate.reward_url,delivery.igsid,input.igAccount?.security):gate.reward_url;
   const richId=follows?gate.reward_dm_rich_message_id:gate.follow_reminder_dm_rich_message_id;let actions:RichAction[];
@@ -79,7 +79,7 @@ export async function handleRecruitmentGatePostback(db:D1Database,client:Client,
   else if(follows){const text=gate.reward_dm_text.replace(/\{\{?\s*IGSID\s*\}?\}/g,()=>delivery.igsid)+(rewardUrl?'\n\n'+rewardUrl:'');actions=[{type:'text',text}];}
   else actions=[{type:'template',elements:[{title:gate.follow_reminder_dm_text.slice(0,80),subtitle:gate.follow_reminder_dm_text.length>80?gate.follow_reminder_dm_text.slice(80,200):undefined,buttons:[{type:'postback',title:gate.follow_reminder_button_label,payload:`CHECK_FOLLOW:${gate.id}:${delivery.id}`}]}]}];
   proof.messages=actions.map(richActionMessage);proof.payloadVersion=await sha256(JSON.stringify(proof.messages));
-  await db.prepare("UPDATE recruitment_gate_operations SET payload_version=? WHERE account_id=? AND operation_key=? AND state='claimed' AND payload_version IS NULL").bind(proof.payloadVersion,input.accountId,key).run();
+  await db.prepare("UPDATE recruitment_gate_operations SET payload_version=?,expected_messages=? WHERE account_id=? AND operation_key=? AND state='claimed' AND payload_version IS NULL").bind(proof.payloadVersion,actions.length,input.accountId,key).run();
   const sender=await factory(key,definitionVersion,undefined,undefined,proof);
   for(const a of actions){if(a.type==='text')await sender.sendText(delivery.igsid,a.text);else if(a.type==='image')await sender.sendImage(delivery.igsid,a.url);else if(a.type==='template')await sender.sendGenericTemplate(delivery.igsid,a.elements);else await sender.sendQuickReply(delivery.igsid,a.text,a.replies);}
   await ready(db,input.accountId,proof,Date.now());

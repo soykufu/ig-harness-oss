@@ -1,3 +1,5 @@
+import {readGateReview} from '../services/recruitment-gate-review.js';
+import {requireRole} from '../middleware/role-guard.js';
 import { verifyTrackingToken } from '../lib/tracking-token.js';
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
@@ -394,6 +396,19 @@ engagementGates.delete('/api/engagement-gates/:id', async (c) => {
     RETURNING id`).bind(id,account.id).first();
   if(!deleted)return c.json({error:'Gate delivery requires reconciliation before deletion'},409);
   return c.json({ success: true });
+});
+
+engagementGates.get('/api/engagement-gates/:id/delivery-review',requireRole('owner','admin'),async(c)=>{
+ c.header('Cache-Control','no-store');
+ try{
+  const id=c.req.query('account_id');
+  const account=id?await c.env.DB.prepare('SELECT id FROM ig_accounts WHERE id=?').bind(id).first<{id:string}>():await c.env.DB.prepare('SELECT id FROM ig_accounts WHERE is_default=1 LIMIT 1').first<{id:string}>();
+  if(!account)return c.json({success:false,error:'Account not found'},404);
+  const gateId=c.req.param('id');if(!gateId)return c.json({success:false,error:'Gate not found'},404);
+  const data=await readGateReview(c.env.DB,account.id,gateId);
+  if(!data)return c.json({success:false,error:'Gate not found in account'},404);
+  return c.json({success:true,data});
+ }catch{return c.json({success:false,error:'送信記録を確認できません。再送せず照合してください'},503);}
 });
 
 engagementGates.get('/api/engagement-gates/:id/deliveries', async (c) => {

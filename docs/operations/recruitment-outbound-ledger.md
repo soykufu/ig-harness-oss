@@ -4,6 +4,12 @@
 
 soykufu-recruitment-policyのquestion/visit/interviewは、停止・辞退・不明送信を解除せず有人キューへ回し、案内取消し・自動加入なしを明示する。これは送信許可ではなく、実際の有人返信は別の認証済み一回契約が必要。30日コホートは既存の実登録/実来店証拠と人の実施確認の条件を維持し、同じevent IDのcandidate/kind/日時/根拠/有人確認/社内テスト指定が食い違えば入力順で捨てず照合待ちにする。不正な時刻・無限の観察窓・空白だけの根拠を計測へ含めない。11受入試験は合格。実台帳04・LINE登録・実見学/面接の接続と実績照合は未実施で、率向上の証明ではない。
 
+## 特典/フォロー確認の読取レビュー（2026-11-21・ソース準備のみ）
+
+owner/adminだけがcampaign詳細から送信記録をGETで確認できる。account/gateの所有範囲を照合し、停止・準備ロック下でもDB読取だけを行い、Meta呼出し・再送・停止解除・受信保留解除を行わない。0039で今後のreceiptへ予定メッセージ数を保存する。旧receiptはNULLのまま、数を推定して成功にしない。全ての予定slot番号/同じowner/API acknowledgement/観測台帳とreceipt stateが一致した場合だけAPI受付の記録として表示し、業務側outcome_unknownは別に照合待ちを維持する。signed echoがあっても閲覧状況はunknown、mayRetryは常にfalse。空の履歴・404・schema欠落503も再送許可ではない。
+
+画面は確認ボタンで直近50件だけを読み、別accountの古い応答を表示しない。本文・送信先IGSID・event key・Meta message ID・秘密値は返さない。receipt保存前に失敗した配信行の処理中/不明markerも照合待ちとして表示する。公開コメント/後続/CTAの完全な送信履歴表示は別残件。この画面のブラウザ実機表示・タップは未検証で、本番配置前の確認が必要。
+
 ## Gateボタン返信の固定ID・受信根拠（2026-11-21・ソース準備のみ）
 
 署名検証後の既存webhookキューで処理中のmessagingイベント（account・送信者・ボタンpayload・開始時刻が一致）だけを根拠にする。配信行をprofile GET前に一回claimし、0038のreceiptへevent key/対象/owner/定義版/描画payloadハッシュ/状態を保存する。特典は`gate-reward:<delivery>`で一回、リマインドは`gate-reminder:<delivery>:<loop>`で一回。同じクリックの再処理は次のloopへ進めず、別の実クリックは現在の段階として検証する。account内のevent keyと操作IDの一意性をschema実物で検査する。

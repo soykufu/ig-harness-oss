@@ -19,6 +19,7 @@ import {
   type RichMessageBlock,
   type MediaItem,
 } from '@/lib/api'
+import GateDeliveryReview from '@/components/gate-delivery-review'
 import Header from '@/components/layout/header'
 import RichMessagePreview from '@/components/rich-message-preview'
 import { formatDateTime, metaErrorHint } from '@/lib/meta-errors'
@@ -481,6 +482,7 @@ export default function CampaignDetailClient() {
         </div>
       </section>
 
+      <GateDeliveryReview gateId={gate.id} />
       {gate.trigger_type === 'comment_on_post' && <RecentReplyFailures />}
     </div>
   )

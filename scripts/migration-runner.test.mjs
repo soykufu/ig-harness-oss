@@ -19,7 +19,7 @@ test('fresh install, second run, staff hashing and account ownership preservatio
   await applyMigrations(adapter(db));
   assert.match(db.prepare('SELECT api_key FROM staff_members').get().api_key, /^sha256:[a-f0-9]{64}$/);
   assert.equal(db.prepare('SELECT account_id FROM comment_rules').get().account_id, 'account-a');
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ig_schema_migrations').get().n, 38);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ig_schema_migrations').get().n, 39);
   db.close();
 });
 test('a failed file has no success marker and can resume without losing earlier migrations', async () => {
@@ -64,7 +64,7 @@ test('adopts legacy repeat-delivery history without recreating the removed uniqu
   await applyMigrations(adapter(db));
   assert.equal(db.prepare('SELECT COUNT(*) n FROM gate_deliveries').get().n, 2);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE name='uq_gate_deliveries_gate_follower'").get().n, 0);
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM ig_schema_migrations').get().n, 38);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM ig_schema_migrations').get().n, 39);
   db.close();
 });
 
@@ -127,7 +127,7 @@ for(const [table,column] of [['gate_deliveries','metadata'],['gate_deliveries','
  const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);await assert.rejects(applyMigrations(adapter(db)),new RegExp('Schema verification failed: '+table+'.'+column));}finally{db.close();}
 });
 
-for(const column of ['event_key','definition_version','payload_version','claimed_at_ms'])test(`rejects missing gate receipt column ${column} despite a complete ledger`,async()=>{
+for(const column of ['event_key','definition_version','payload_version','claimed_at_ms','expected_messages'])test(`rejects missing gate receipt column ${column} despite a complete ledger`,async()=>{
  const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));
  // Rebuild a deliberately damaged receipt table; the migration ledger is unchanged.
  db.exec('ALTER TABLE recruitment_gate_operations RENAME TO damaged_gate_operations');

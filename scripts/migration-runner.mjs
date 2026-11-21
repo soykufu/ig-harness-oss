@@ -145,7 +145,7 @@ export async function verifyLatestSchema(query) {
     broadcast_recipients: ['broadcast_id','follower_id','status'],
     webhook_events: ['account_id','event_key','subject_id','status'],
     rate_limit_buckets: ['bucket_key','hits','expires_at'],
-    recruitment_gate_operations: ['account_id','operation_key','event_key','delivery_id','follower_id','phase','loop_count','definition_version','payload_version','owner_epoch','claimed_at_ms','state'],
+    recruitment_gate_operations: ['account_id','operation_key','event_key','delivery_id','follower_id','phase','loop_count','definition_version','payload_version','expected_messages','owner_epoch','claimed_at_ms','state'],
     gate_deliveries: ['id','gate_id','follower_id','igsid','status','metadata','end_reason','delivered_at','followup_step_sent','next_followup_at'],
     engagement_gates: ['id','account_id','status','followup_dm_sequence','reward_url','line_connection_id','line_pool_slug','line_tracked_link_short'],
     comment_rule_jobs: ['id','account_id','follower_id','status','public_reply_status','public_reply_id','reply_text','reply_mode','media_id','public_reply_plan_hash','public_reply_owner_epoch','public_reply_claimed_at'],
