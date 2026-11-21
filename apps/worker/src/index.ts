@@ -362,7 +362,7 @@ export async function runScheduledJobs(
       const tasks: Array<[string, Promise<unknown>]> = [];
       if (work.steps) tasks.push(['steps', processStepDeliveries(env.DB, igClient, env.WORKER_URL, account.id, recruitmentJobClientFactory(env, env.DB, current))]);
       if (work.broadcasts) tasks.push(['broadcasts', processScheduledBroadcasts(env.DB, igClient, env.WORKER_URL, account.id, recruitmentJobClientFactory(env, env.DB, current))]);
-      if (work.followups) tasks.push(['followups', processFollowupDrip(env.DB, igClient, env.WORKER_URL, undefined, ref, account.id)]);
+      if (work.followups) tasks.push(['followups', processFollowupDrip(env.DB, igClient, env.WORKER_URL, undefined, ref, account.id,recruitmentJobClientFactory(env, env.DB, current))]);
       if (work.media) tasks.push(['media', processMediaPosts(env.DB, igClient, account.id)]);
       if (work.webhooks) tasks.push(['webhooks', processQueuedWebhooks(env.DB, igClient, account, env.WORKER_URL, env)]);
       else if (work.comments) tasks.push(['comments', processCommentRuleJobs(env.DB, igClient, account.id, commentJobClientFactory(env, env.DB, current))]);

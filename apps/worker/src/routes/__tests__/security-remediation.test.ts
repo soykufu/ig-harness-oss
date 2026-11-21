@@ -146,3 +146,10 @@ it('does not complete a deletion while another mutation is in flight', async () 
   sqlite.exec("DELETE FROM active_mutations WHERE id='inflight'");
   expect((await resolve()).status).toBe(200); expect(sqlite.prepare('SELECT COUNT(*) AS n FROM data_deletion_locks').get()?.n).toBe(0);
 });
+
+it.each(['delivery_in_progress','outcome_unknown'])('holds deletion while a gate phase is %s before any DM slot exists',async reason=>{
+ const {request,sqlite}=await fixture();const response=await(await request('/data-deletion',{method:'POST',body:new URLSearchParams({signed_request:await signed('app-secret')})})).json() as any;
+ sqlite.exec("INSERT INTO ig_accounts(id,ig_user_id,access_token,created_at,updated_at) VALUES('a','111','test','2026-01-01','2026-01-01'); INSERT INTO followers(id,igsid,account_id) VALUES(1,'456','a'); INSERT INTO engagement_gates(id,name,trigger_type,initial_dm_text,follow_reminder_dm_text,reward_dm_text,account_id) VALUES('g','g','dm_keyword','a','b','c','a')");
+ sqlite.prepare("INSERT INTO gate_deliveries(id,gate_id,follower_id,igsid,status,end_reason) VALUES('d','g',1,'456','delivered',?)").run(reason);
+ const res=await request(`/api/data-deletion/${response.confirmation_code}/resolve`,{method:'POST',headers:{Authorization:'Bearer owner-key','Content-Type':'application/json'},body:JSON.stringify({accountId:'a',followerId:1,identityVerified:true})});expect(res.status).toBe(409);expect(sqlite.prepare('SELECT COUNT(*) n FROM followers').get()?.n).toBe(1);
+});

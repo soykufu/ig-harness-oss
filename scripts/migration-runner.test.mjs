@@ -122,3 +122,7 @@ test('public phase migration leaves legacy acknowledgement and outcome unchanged
   assert.deepEqual({...row},{public_reply_status:'sent',public_reply_id:'old-ack',public_reply_plan_hash:null,public_reply_owner_epoch:null,public_reply_claimed_at:null});
  }finally{db.close();}
 });
+
+for(const [table,column] of [['gate_deliveries','metadata'],['gate_deliveries','end_reason'],['gate_deliveries','followup_step_sent'],['engagement_gates','followup_dm_sequence']])test(`rejects missing gate purpose field ${table}.${column} despite a complete ledger`,async()=>{
+ const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);await assert.rejects(applyMigrations(adapter(db)),new RegExp('Schema verification failed: '+table+'.'+column));}finally{db.close();}
+});

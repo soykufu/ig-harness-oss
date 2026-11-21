@@ -1,5 +1,6 @@
+import {gateFollowupKey,gateFollowupVersion,gateFollowupPayloadVersion,type GateFollowupProof} from './recruitment-gate-followup.js';
 import { issueTrackingToken, type TrackingEnv } from '../lib/tracking-token.js';
-import { InstagramApiError } from '@ig-harness/ig-sdk';
+import { InstagramApiError,richActionMessage,type RichAction } from '@ig-harness/ig-sdk';
 import { messagingEligibility } from './messaging-window.js';
 import { enqueueCommentRuleJob } from './comment-rule-jobs.js';
 import { listEngagementGates, createGateDelivery, updateGateDelivery, getGateDelivery, getEngagementGate, getRichMessage, parseFollowupSequence, logMessage } from '@ig-harness/db';
@@ -69,6 +70,8 @@ interface IgClientLike {
   replyToComment(commentId: string, message: string): Promise<unknown>;
   postCommentToMedia(mediaId: string, message: string): Promise<unknown>;
 }
+
+type GateClientFactory=(key:string,definitionVersion?:string,subjectVersion?:string,proof?:GateFollowupProof)=>Promise<IgClientLike>;
 
 interface FollowerRef {
   id: number;
@@ -564,6 +567,7 @@ export async function processFollowupDrip(
   maxPerTick = 50,
   igAccount?: IgAccountRef,
   accountId?: string,
+  clientFactory?:GateClientFactory,
 ): Promise<{ sent: number; skipped: number }> {
   // Operator stop switch: followups stay queued, resume after unpausing.
   if (await isOutboundPaused(db)) return { sent: 0, skipped: 0 };
@@ -619,11 +623,13 @@ export async function processFollowupDrip(
       await updateGateDelivery(db,d.id,{ next_followup_at: null, end_reason: eligibility });
       skipped++; continue;
     }
-    const claim = await db.prepare("UPDATE gate_deliveries SET next_followup_at=NULL,end_reason='delivery_in_progress' WHERE id=? AND followup_step_sent=? AND next_followup_at=? AND EXISTS(SELECT 1 FROM engagement_gates WHERE id=gate_deliveries.gate_id AND status='active') RETURNING id").bind(d.id,d.followup_step_sent,d.next_followup_at).first();
+    const version=clientFactory?await gateFollowupVersion(gate,d):undefined;
+    const claim = await db.prepare("UPDATE gate_deliveries SET next_followup_at=NULL,end_reason='delivery_in_progress',metadata=json_set(metadata,'$.recruitment_followup',json(?)) WHERE id=? AND status='delivered' AND followup_step_sent=? AND next_followup_at=? AND EXISTS(SELECT 1 FROM engagement_gates WHERE id=gate_deliveries.gate_id AND status='active') RETURNING id")
+      .bind(JSON.stringify({step:stepIdx,version:version??null,claimed_at_ms:Date.now()}),d.id,d.followup_step_sent,d.next_followup_at).first();
     if (!claim) { skipped++; continue; }
     let sendOk = false;
     try {
-      await sendFollowupStep(db, igClient, d.igsid, step, gate, workerBaseUrl, igAccount, d.follower_id);
+      await sendFollowupStep(db, igClient, d.igsid, step, gate, workerBaseUrl, igAccount, d.follower_id,clientFactory&&version?{factory:clientFactory,delivery:d,version}:undefined);
       sendOk = true;
     } catch (err) {
       console.error(
@@ -631,8 +637,9 @@ export async function processFollowupDrip(
         err,
       );
       await recordDmFailure(db, accountId ?? 'unknown').catch(() => {});
-      const retry = err instanceof InstagramApiError && err.status<500 && err.rateLimited;
-      await updateGateDelivery(db,d.id,{end_reason:retry?'rate_limited':'outcome_unknown',next_followup_at:retry?new Date(Date.now()+Math.max(60_000,err.retryAfterMs ?? 60_000)).toISOString():null});
+      const retry = !clientFactory && err instanceof InstagramApiError && err.status<500 && err.rateLimited;
+      if(clientFactory)await db.prepare("UPDATE gate_deliveries SET end_reason='outcome_unknown' WHERE id=? AND status='delivered' AND followup_step_sent=? AND end_reason='delivery_in_progress' AND json_extract(metadata,'$.recruitment_followup.version')=?").bind(d.id,stepIdx,version).run();
+      else await updateGateDelivery(db,d.id,{end_reason:retry?'rate_limited':'outcome_unknown',next_followup_at:retry?new Date(Date.now()+Math.max(60_000,(err as InstagramApiError).retryAfterMs ?? 60_000)).toISOString():null});
     }
 
     if (!sendOk) {
@@ -642,11 +649,17 @@ export async function processFollowupDrip(
 
     const nextStep = stepIdx + 1;
     const nextAt = nextFollowupAt(gate, nextStep, new Date().toISOString().slice(0, 19) + 'Z');
-    await updateGateDelivery(db, d.id, {
-      end_reason: null,
-      followup_step_sent: nextStep,
-      next_followup_at: nextAt,
-    });
+    if(clientFactory){
+      // Do not erase a newer stop/drop or schedule from another actor.
+      let recorded:unknown;
+      try{
+        recorded=await db.prepare("UPDATE gate_deliveries SET end_reason=NULL,followup_step_sent=?,next_followup_at=? WHERE id=? AND status='delivered' AND followup_step_sent=? AND end_reason='delivery_in_progress' AND json_extract(metadata,'$.recruitment_followup.version')=? AND EXISTS(SELECT 1 FROM engagement_gates WHERE id=gate_deliveries.gate_id AND status='active' AND followup_dm_sequence IS ? AND reward_url IS ? AND line_connection_id IS ? AND line_pool_slug IS ? AND line_tracked_link_short IS ?) RETURNING id").bind(nextStep,nextAt,d.id,stepIdx,version,gate.followup_dm_sequence,gate.reward_url,gate.line_connection_id,gate.line_pool_slug,gate.line_tracked_link_short).first();
+      }catch{console.error('[followup] completion journal requires reconciliation');}
+      if(!recorded){
+        await db.prepare("UPDATE gate_deliveries SET end_reason='outcome_unknown' WHERE id=? AND status='delivered' AND followup_step_sent=? AND end_reason='delivery_in_progress' AND json_extract(metadata,'$.recruitment_followup.version')=?").bind(d.id,stepIdx,version).run();
+        skipped++;continue;
+      }
+    }else await updateGateDelivery(db, d.id, {end_reason: null,followup_step_sent: nextStep,next_followup_at: nextAt});
     sent++;
   }
   return { sent, skipped };
@@ -661,57 +674,33 @@ async function sendFollowupStep(
   workerBaseUrl?: string,
   igAccount?: IgAccountRef,
   followerId?: number,
+  guarded?:{factory:GateClientFactory;delivery:GateDelivery;version:string},
 ): Promise<void> {
-  // Same two-layer wrap as deliverReward — follow-up taps also flow
-  // through both LINE Harness cross-link and IG Harness click tracking.
-  const baseUrl = await effectiveRewardUrl(db, gate, igsid, igAccount);
-  const trackedRewardUrl =
-    workerBaseUrl && baseUrl
-      ? await wrapClickTracking(workerBaseUrl, gate.id, baseUrl, igsid, igAccount?.security)
-      : baseUrl ?? '';
-
-  const expandedText = expandIgsidPlaceholder(
-    step.text.replace(/\{\{?\s*REWARD_URL\s*\}?\}/g, trackedRewardUrl),
-    igsid,
-  );
-
-  if (step.image_url) {
-    await igClient.sendImage(igsid, step.image_url);
-    if (followerId !== undefined) {
-      await logMessage(db, {
-        followerId,
-        direction: 'out',
-        messageType: 'text',
-        body: `[画像] ${step.image_url}`,
-        triggerSource: 'gate',
-      });
-    }
+  // No implicit LINE API creation/fallback in the enforced preparation path.
+  // Signed IG↔LINE handoff is an independent, still-unverified dependency.
+  if(guarded && gate.line_connection_id)throw Error('Gate follow-up LINE handoff requires verification');
+  const baseUrl=await effectiveRewardUrl(db,gate,igsid,igAccount);
+  const trackedRewardUrl=workerBaseUrl&&baseUrl?await wrapClickTracking(workerBaseUrl,gate.id,baseUrl,igsid,igAccount?.security):baseUrl??'';
+  const expandedText=step.text.replace(/\{\{?\s*(REWARD_URL|IGSID)\s*\}?\}/g,(_m,key)=>key==='IGSID'?igsid:trackedRewardUrl);
+  // Prepare every action before the first send (including button signing).
+  const actions:RichAction[]=[];
+  if(step.image_url)actions.push({type:'image',url:step.image_url});
+  if(step.button_label&&step.button_url){
+    let buttonUrl=step.button_url.replace(/\{\{?\s*REWARD_URL\s*\}?\}/g,()=>trackedRewardUrl);
+    if(workerBaseUrl&&/^https?:\/\//.test(buttonUrl)&&!buttonUrl.includes('/click/'))buttonUrl=await wrapClickTracking(workerBaseUrl,gate.id,buttonUrl,igsid,igAccount?.security);
+    actions.push({type:'template',elements:[{title:expandedText.slice(0,80),subtitle:expandedText.length>80?expandedText.slice(80,160):undefined,buttons:[{type:'web_url',title:step.button_label.slice(0,20),url:buttonUrl}]}]});
+  }else actions.push({type:'text',text:expandedText});
+  if(guarded){
+    const messages=actions.map(richActionMessage),payloadVersion=await gateFollowupPayloadVersion(messages);
+    const prepared=await db.prepare("UPDATE gate_deliveries SET metadata=json_set(metadata,'$.recruitment_followup.payload',?) WHERE id=? AND status='delivered' AND end_reason='delivery_in_progress' AND followup_step_sent=? AND json_extract(metadata,'$.recruitment_followup.version')=? AND json_extract(metadata,'$.recruitment_followup.payload') IS NULL RETURNING id").bind(payloadVersion,guarded.delivery.id,guarded.delivery.followup_step_sent,guarded.version).first();
+    if(!prepared)throw Error('Gate follow-up preparation changed');
+    const proof:GateFollowupProof={deliveryId:guarded.delivery.id,stepIndex:guarded.delivery.followup_step_sent,followerId:guarded.delivery.follower_id,igsid,definitionVersion:guarded.version,messages,payloadVersion};
+    igClient=await guarded.factory(gateFollowupKey(proof.deliveryId,proof.stepIndex),guarded.version,undefined,proof);
   }
-
-  if (step.button_label && step.button_url) {
-    // Text + one URL button → use a minimal generic template.
-    // Wrap the button URL too (unless it's already a click-tracked URL or
-    // a placeholder that already got the wrapped value).
-    let buttonUrl = step.button_url.replace(/\{\{?\s*REWARD_URL\s*\}?\}/g, trackedRewardUrl);
-    if (workerBaseUrl && /^https?:\/\//.test(buttonUrl) && !buttonUrl.includes('/click/')) {
-      buttonUrl = await wrapClickTracking(workerBaseUrl, gate.id, buttonUrl, igsid, igAccount?.security);
-    }
-    await igClient.sendGenericTemplate(igsid, [
-      {
-        title: expandedText.slice(0, 80),
-        subtitle: expandedText.length > 80 ? expandedText.slice(80, 160) : undefined,
-        buttons: [
-          { type: 'web_url', title: step.button_label.slice(0, 20), url: buttonUrl },
-        ],
-      },
-    ]);
-    if (followerId !== undefined) {
-      await logMessage(db, { followerId, direction: 'out', messageType: 'template', body: expandedText, triggerSource: 'gate' });
-    }
-  } else {
-    await igClient.sendText(igsid, expandedText);
-    if (followerId !== undefined) {
-      await logMessage(db, { followerId, direction: 'out', messageType: 'text', body: expandedText, triggerSource: 'gate' });
-    }
+  for(const action of actions){
+    if(action.type==='image')await igClient.sendImage(igsid,action.url);
+    else if(action.type==='template')await igClient.sendGenericTemplate(igsid,action.elements);
+    else if(action.type==='text')await igClient.sendText(igsid,action.text);
+    if(followerId!==undefined)await logMessage(db,{followerId,direction:'out',messageType:action.type==='template'?'template':'text',body:action.type==='image'?`[画像] ${action.url}`:expandedText,triggerSource:'gate'});
   }
 }

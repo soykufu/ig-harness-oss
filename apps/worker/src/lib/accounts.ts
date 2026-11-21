@@ -1,3 +1,4 @@
+import type {GateFollowupProof} from '../services/recruitment-gate-followup.js';
 import {assertRecruitmentPublicReplyReady} from '../services/recruitment-public-reply.js';
 import {type RecruitmentRichTest} from '../services/recruitment-rich-test.js';
 import type {HumanReplyInput} from '../services/recruitment-human-reply.js';
@@ -185,7 +186,7 @@ export async function getAccountClient(
   env: AccountEnv,
   db: D1Database,
   account: IgAccount,
-  options: { forHealthProbe?: boolean; skipTokenRefresh?: boolean; recruitmentOperation?: { key: string; ownerEpoch: string; definitionVersion?: string; subjectVersion?: string; humanReply?: HumanReplyInput; richTest?: RecruitmentRichTest } } = {},
+  options: { forHealthProbe?: boolean; skipTokenRefresh?: boolean; recruitmentOperation?: { key: string; ownerEpoch: string; definitionVersion?: string; subjectVersion?: string; humanReply?: HumanReplyInput; richTest?: RecruitmentRichTest; gateFollowup?:GateFollowupProof } } = {},
 ): Promise<InstagramClient> {
   await assertGraphAvailable(db,account.id);
   if (!options.forHealthProbe) {
@@ -249,15 +250,16 @@ export async function getAccountClient(
  * reconcile ownership, unpause, or mint an epoch. Final SDK checks re-read it. */
 export function recruitmentJobClientFactory(env: AccountEnv | undefined, db: D1Database, account: IgAccount) {
   if (env?.RECRUITMENT_LEDGER_ENFORCEMENT !== '1') return undefined;
-  return async (key: string, definitionVersion?: string, subjectVersion?:string): Promise<InstagramClient> => {
-    if (!/^(comment|comment-dm|comment-public|step|broadcast):.+/.test(key) || key.length > 500) throw new Error('Invalid comment operation identity');
-    if ((key.startsWith('step:') || key.startsWith('broadcast:') || key.startsWith('comment-public:')) && !/^[a-f0-9]{64}$/.test(definitionVersion??'')) throw new Error('Step version evidence required');
+  return async (key: string, definitionVersion?: string, subjectVersion?:string,gateFollowup?:GateFollowupProof): Promise<InstagramClient> => {
+    if (!/^(comment|comment-dm|comment-public|step|broadcast|gate-followup):.+/.test(key) || key.length > 500) throw new Error('Invalid comment operation identity');
+    if ((key.startsWith('step:') || key.startsWith('broadcast:') || key.startsWith('comment-public:') || key.startsWith('gate-followup:')) && !/^[a-f0-9]{64}$/.test(definitionVersion??'')) throw new Error('Step version evidence required');
     if (key.startsWith('step:') && !/^[a-f0-9]{64}$/.test(subjectVersion??'')) throw Error('Step substitution evidence required');
+    if(key.startsWith('gate-followup:')&&!gateFollowup)throw Error('Gate follow-up purpose required');
     const now = Date.now();
     const control = await db.prepare(`SELECT owner_epoch FROM recruitment_outbound_control WHERE account_id=? AND owner='harness' AND reconciled_at_ms BETWEEN ? AND ?`)
       .bind(account.id,now-60_000,now).first<{owner_epoch:string}>();
     if (!control?.owner_epoch) throw new Error('Comment ownership requires reconciliation');
-    return getAccountClient(env, db, account, {skipTokenRefresh:true,recruitmentOperation:{key,ownerEpoch:control.owner_epoch,definitionVersion,subjectVersion}});
+    return getAccountClient(env, db, account, {skipTokenRefresh:true,recruitmentOperation:{key,ownerEpoch:control.owner_epoch,definitionVersion,subjectVersion,gateFollowup}});
   };
 }
 

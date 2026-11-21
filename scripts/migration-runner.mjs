@@ -145,6 +145,8 @@ export async function verifyLatestSchema(query) {
     broadcast_recipients: ['broadcast_id','follower_id','status'],
     webhook_events: ['account_id','event_key','subject_id','status'],
     rate_limit_buckets: ['bucket_key','hits','expires_at'],
+    gate_deliveries: ['id','gate_id','follower_id','igsid','status','metadata','end_reason','delivered_at','followup_step_sent','next_followup_at'],
+    engagement_gates: ['id','account_id','status','followup_dm_sequence','reward_url','line_connection_id','line_pool_slug','line_tracked_link_short'],
     comment_rule_jobs: ['id','account_id','follower_id','status','public_reply_status','public_reply_id','reply_text','reply_mode','media_id','public_reply_plan_hash','public_reply_owner_epoch','public_reply_claimed_at'],
     data_deletion_requests: ['code','request_hash','status'],
     tracked_links: ['destination_url','ref_code','tag_id','scenario_id','is_active','updated_at'],
