@@ -326,28 +326,14 @@ export async function createGateDelivery(
     return row;
   }
 
-  // allow_repeat=0 (legacy idempotent): SELECT existing row first; only
-  // INSERT if none exists. Race-tolerant: 2 concurrent webhooks may produce
-  // 2 rows in the worst case, but we no longer rely on the unique index
-  // (dropped in migration 0013) for correctness.
-  const existing = await db
-    .prepare('SELECT * FROM gate_deliveries WHERE gate_id = ? AND follower_id = ? LIMIT 1')
-    .bind(data.gate_id, data.follower_id)
-    .first<GateDelivery>();
-  if (existing) return existing;
-
-  await db
-    .prepare(
-      `INSERT INTO gate_deliveries (id, gate_id, follower_id, igsid, metadata)
-       VALUES (?, ?, ?, ?, ?)`,
-    )
-    .bind(id, data.gate_id, data.follower_id, data.igsid, JSON.stringify(data.metadata ?? {}))
-    .run();
-  const row = await db
-    .prepare('SELECT * FROM gate_deliveries WHERE id = ?')
-    .bind(id)
-    .first<GateDelivery>();
-  if (!row) throw new Error('Failed to create gate delivery');
+  // One SQLite write serializes the non-repeat check and insert. Do not
+  // recreate the removed unique index or rewrite historical repeat rows.
+  await db.prepare(`INSERT INTO gate_deliveries(id,gate_id,follower_id,igsid,metadata)
+    SELECT ?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM gate_deliveries WHERE gate_id=? AND follower_id=?)`)
+    .bind(id,data.gate_id,data.follower_id,data.igsid,JSON.stringify(data.metadata??{}),data.gate_id,data.follower_id).run();
+  const row=await db.prepare('SELECT * FROM gate_deliveries WHERE gate_id=? AND follower_id=? ORDER BY triggered_at,id LIMIT 1')
+    .bind(data.gate_id,data.follower_id).first<GateDelivery>();
+  if(!row)throw new Error('Failed to create gate delivery');
   return row;
 }
 

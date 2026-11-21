@@ -170,8 +170,7 @@ export async function triggerGateForDmKeyword(
       return true;
     }
 
-    await sendCtaDm(db, igClient, gate, delivery, args.igAccount);
-    await updateGateDelivery(db, delivery.id, { status: 'cta_sent' });
+    await sendInitialCtaOnce(db,igClient,gate,delivery,args.igAccount);
     return true;
   }
   return false;
@@ -200,8 +199,7 @@ export async function triggerGateForStoryMention(
       return true;
     }
 
-    await sendCtaDm(db, igClient, gate, delivery, args.igAccount);
-    await updateGateDelivery(db, delivery.id, { status: 'cta_sent' });
+    await sendInitialCtaOnce(db,igClient,gate,delivery,args.igAccount);
     return true;
   }
   return false;
@@ -234,6 +232,25 @@ function parseCommentReplyPatterns(raw: string): string[] {
 }
 
 // richMessageLabel removed — body now stores full JSON for rich rendering in admin UI
+
+/** Initial CTA claim is durable even before its enforced SDK purpose is wired.
+ * Unknown outcomes stay held. This does not authorize an enforced send. */
+async function sendInitialCtaOnce(db:D1Database,client:IgClientLike,gate:EngagementGate,delivery:GateDelivery,igAccount?:IgAccountRef){
+ if(await isOutboundPaused(db))return;
+ const claimed=await db.prepare(`UPDATE gate_deliveries SET end_reason='delivery_in_progress',metadata=json_set(metadata,'$.cta_send_status','processing')
+ WHERE id=? AND gate_id=? AND follower_id=? AND igsid=? AND status='triggered' AND end_reason IS NULL
+ AND json_extract(metadata,'$.cta_send_status') IS NULL
+ AND EXISTS(SELECT 1 FROM engagement_gates g JOIN followers f ON f.account_id=g.account_id AND f.id=gate_deliveries.follower_id AND f.igsid=gate_deliveries.igsid AND f.messaging_owner='primary' WHERE g.id=gate_deliveries.gate_id AND g.status='active') RETURNING id`)
+ .bind(delivery.id,gate.id,delivery.follower_id,delivery.igsid).first();
+ if(!claimed)return;
+ try{
+  await sendCtaDm(db,client,gate,delivery,igAccount);
+  const saved=await db.prepare("UPDATE gate_deliveries SET status='cta_sent',end_reason=NULL,metadata=json_set(metadata,'$.cta_send_status','sent') WHERE id=? AND status='triggered' AND end_reason='delivery_in_progress' AND json_extract(metadata,'$.cta_send_status')='processing' AND EXISTS(SELECT 1 FROM engagement_gates WHERE id=gate_deliveries.gate_id AND status='active') RETURNING id").bind(delivery.id).first();
+  if(!saved)throw Error('Initial CTA outcome requires reconciliation');
+ }catch(error){
+  await db.prepare("UPDATE gate_deliveries SET end_reason='outcome_unknown',metadata=json_set(metadata,'$.cta_send_status','uncertain') WHERE id=? AND end_reason='delivery_in_progress' AND json_extract(metadata,'$.cta_send_status')='processing'").bind(delivery.id).run();throw error;
+ }
+}
 
 async function sendCtaDm(
   db: D1Database,
