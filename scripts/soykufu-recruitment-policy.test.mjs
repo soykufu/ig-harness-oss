@@ -10,7 +10,7 @@ test('stop and uncertain delivery suppress automatic material delivery', () => {
   assert.equal(decide({...line,deliveryUncertain:true},guide,now).reason,'reconcile_delivery');
 });
 test('questions and interview requests hand off and cancel nurture without requiring a form', () => {
-  for(const kind of ['question','visit','interview']) assert.deepEqual(decide({...line,outboundPaused:true},{kind},now),{action:'human_handoff',reason:kind,owner:'ishibashi',cancelNurture:true,enroll:false});
+  for(const kind of ['question','visit','interview']) assert.deepEqual(decide({...line,outboundPaused:true},{kind},now),{action:'human_handoff',reason:kind,owner:'ishibashi',cancelNurture:true,preserveSuppression:true,enroll:false});
 });
 test('08:00 inclusive and 21:00 exclusive apply to normal IG delivery', () => {
   for(const [time,allowed] of [['2026-11-19T22:59:00Z',false],['2026-11-19T23:00:00Z',true],['2026-11-20T11:59:00Z',true],['2026-11-20T12:00:00Z',false]]) {
@@ -51,4 +51,23 @@ test('cohorts exclude internal users and immature registrations; require real at
   ];
   assert.deepEqual(recruitmentCohort([...events,events[1]],now),{windowDays:30,matureRegistrations:2,immatureRegistrations:1,visitAttendees:0,interviewAttendees:1,interviewRate:0.5});
   assert.equal(recruitmentCohort([],now).interviewRate,null);
+});
+test('new questions after stop/decline or an unknown send reach the human queue without resuming automation',()=>{
+ for(const patch of [{stopped:true},{withdrawn:true},{blocked:true},{deliveryUncertain:true}]){
+  const state={...line,...patch};const before=JSON.stringify(state);
+  assert.deepEqual(decide(state,{kind:'question'},now),{action:'human_handoff',reason:'question',owner:'ishibashi',cancelNurture:true,preserveSuppression:true,enroll:false});assert.equal(JSON.stringify(state),before);
+  assert.equal(decide(state,guide,now).action,'hold');
+ }
+});
+test('conflicting event IDs never silently change the cohort by input order',()=>{
+ const event={eventId:'one',candidateId:'a',kind:'line_registered',at:now-40*86400000,evidenceId:'follow-a'};
+ for(const patch of [{candidateId:'b'},{kind:'visit_attended'},{at:event.at+1},{evidenceId:'other'},{confirmedByHuman:true},{internal:true}]){
+  assert.throws(()=>recruitmentCohort([event,{...event,...patch}],now),/Conflicting event/);assert.throws(()=>recruitmentCohort([{...event,...patch},event],now),/Conflicting event/);
+ }
+ assert.equal(recruitmentCohort([event,{...event}],now).matureRegistrations,1);
+});
+test('invalid timestamps/windows and whitespace-only evidence cannot inflate measured results',()=>{
+ const e={eventId:'one',candidateId:'a',kind:'line_registered',at:now-40*86400000,evidenceId:'   '};
+ assert.equal(recruitmentCohort([e],now).matureRegistrations,0);
+ assert.throws(()=>recruitmentCohort([{...e,at:-1}],now),/Invalid event/);assert.throws(()=>recruitmentCohort([],now,Infinity),/Invalid observation/);
 });

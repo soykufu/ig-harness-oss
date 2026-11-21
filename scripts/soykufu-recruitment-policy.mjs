@@ -2,11 +2,11 @@
 // A tested adapter and explicit cutover are still required before production.
 export function nextRecruitmentAction(s, request, now = Date.now()) {
   const hold = reason => ({ action: 'hold', reason, enroll: false });
+  if (request.kind === 'question' || request.kind === 'visit' || request.kind === 'interview') {
+    return { action: 'human_handoff', reason: request.kind, owner: 'ishibashi', cancelNurture: true, preserveSuppression: true, enroll: false };
+  }
   if (s.blocked || s.stopped || s.withdrawn) return hold('stopped');
   if (s.deliveryUncertain) return hold('reconcile_delivery');
-  if (request.kind === 'question' || request.kind === 'visit' || request.kind === 'interview') {
-    return { action: 'human_handoff', reason: request.kind, owner: 'ishibashi', cancelNurture: true, enroll: false };
-  }
   if (s.humanActive) return hold('human_active');
   if (s.outboundPaused) return hold('outbound_paused');
   if (s.channel === 'instagram') {
@@ -42,26 +42,27 @@ export function nextRecruitmentAction(s, request, now = Date.now()) {
 // Event timestamps represent the actual occurrence, not data entry time.
 // Registration counts require a real LINE registration event; clicks do not count.
 export function recruitmentCohort(events, asOf, windowDays = 30) {
-  if (!Number.isFinite(asOf) || !(windowDays > 0)) throw new Error('Invalid observation window');
+  if (!Number.isSafeInteger(asOf) || asOf<0 || !Number.isFinite(windowDays) || !(windowDays > 0)) throw new Error('Invalid observation window');
   const rows = new Map();
-  const seen = new Set();
+  const seen = new Map();
   for (const e of events) {
-    if (!e.eventId || !e.candidateId || !Number.isFinite(e.at) || e.at > asOf) throw new Error('Invalid event');
-    if (seen.has(e.eventId)) continue;
-    seen.add(e.eventId);
+    if (typeof e.eventId!=='string'||!e.eventId.trim()||typeof e.candidateId!=='string'||!e.candidateId.trim()||typeof e.kind!=='string'||!e.kind||!Number.isSafeInteger(e.at)||e.at<0||e.at>asOf) throw new Error('Invalid event');
+    const signature=JSON.stringify([e.candidateId,e.kind,e.at,e.evidenceId??null,e.confirmedByHuman===true,e.internal===true]);
+    if(seen.has(e.eventId)){if(seen.get(e.eventId)!==signature)throw new Error('Conflicting event identity requires reconciliation');continue;}
+    seen.set(e.eventId,signature);
     if (!rows.has(e.candidateId)) rows.set(e.candidateId, []);
     rows.get(e.candidateId).push(e);
   }
   let mature = 0, interviews = 0, visits = 0, immature = 0;
   for (const list of rows.values()) {
     if (list.some(e => e.internal === true)) continue;
-    const registrations = list.filter(e => e.kind === 'line_registered' && e.evidenceId).sort((a,b) => a.at-b.at);
+    const registrations = list.filter(e => e.kind === 'line_registered' && typeof e.evidenceId==='string' && e.evidenceId.trim()).sort((a,b) => a.at-b.at);
     if (!registrations.length) continue;
     const registeredAt = registrations[0].at;
     const cutoff = registeredAt + windowDays * 86400000;
     if (cutoff > asOf) { immature++; continue; }
     mature++;
-    const occurred = kind => list.some(e => e.kind === kind && e.evidenceId && e.confirmedByHuman === true && e.at >= registeredAt && e.at <= cutoff);
+    const occurred = kind => list.some(e => e.kind === kind && typeof e.evidenceId==='string' && e.evidenceId.trim() && e.confirmedByHuman === true && e.at >= registeredAt && e.at <= cutoff);
     if (occurred('visit_attended')) visits++;
     if (occurred('interview_attended')) interviews++;
   }
