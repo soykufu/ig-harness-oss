@@ -138,6 +138,8 @@ export async function verifyLatestSchema(query) {
     staff_members: ['id','api_key','email','updated_at'],
     follower_scenarios: ['end_reason'],
     scenarios: ['description','trigger_tag_id'],
+    forms: ['description','on_submit_tag_id','on_submit_scenario_id','on_submit_message_type','on_submit_message_content','save_to_metadata','submit_count','updated_at'],
+    form_submissions: ['form_id','follower_id','answers','submitted_at'],
     scenario_steps: ['condition_type','condition_value','next_step_on_false'],
     broadcast_runs: ['broadcast_id','started_at'],
     broadcast_recipients: ['broadcast_id','follower_id','status'],

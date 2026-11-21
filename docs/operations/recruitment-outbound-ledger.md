@@ -1,5 +1,11 @@
 # 採用DM共通台帳の組込み条件
 
+## Form受付の土台と配信証拠の保護（2026-11-21・ソースのみ）
+
+公開回答と一般metadata更新はrecruitment_deliveryを含む入力を拒否する。一般項目の保存もaccountと取得時metadataが一致する場合だけ更新し、別処理の新しい停止・辞退などを古い画面で上書きしない。formからプロフィールへ保存するのは定義済みの回答欄だけとする。公開formのfriendId/IGSIDヒントは所有accountと照合し、矛盾・別account・未所有form・不明な回答者は受付と全副作用の前に拒否する。これは本人性の証明ではなく、署名付き回答者認証と安定受付ID・重複抑止・送信直前の目的照合は引き続き必要。
+
+追加migration0035はformsの不足列だけを加え、既存回答から件数を集計する。旧formのmetadata自動保存は既定0を維持する。CRUDはSQLite整数IDを発行し、form_submissionsの元のfollower_id/answers/submitted_atをAPIのfriend_id/data/created_atへ読み替える。識別済み回答の保存と件数更新を同一batchにし、別account・停止済みform・件数保存失敗では部分受付を残さない。元のNOT NULL回答者制約は維持し、匿名の疑似顧客や別の保存表を作らない。回答者向けの公開ページは未提供。migrationは本番未適用で、旧回答ID・本文・日時を保つ試験を追加している。
+
 ## Step差込元の最終照合（2026-11-21・ソースのみ）
 
 stepの操作IDは従来のenrollment/stepで固定したまま、定義ハッシュとは別にaccount/IGSID/follower ID/表示名/usernameの差込元ハッシュを送信準備時に持つ。SDKのfetch直前に現DBを読み、欠落・変更なら送信しない。変更を新操作IDや再送許可にはしない。定期・即時keyword/referral経路とも同じ工場を通す。

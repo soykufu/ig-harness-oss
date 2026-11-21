@@ -1,4 +1,5 @@
 import { messagingEligibility } from '../services/messaging-window.js';
+import { assertPublicMetadataPatch } from '../services/recruitment-metadata.js';
 import { isOutboundPaused } from '../services/human-touch.js';
 import { Hono } from 'hono';
 import {
@@ -11,7 +12,7 @@ import {
   createFormSubmission,
   jstNow,
 } from '@ig-harness/db';
-import { getFriendByLineUserId, getFriendById, getIgAccountById } from '@ig-harness/db';
+import { getFriendById, getIgAccountById } from '@ig-harness/db';
 import { addTagToFriend, enrollFriendInScenario } from '@ig-harness/db';
 import type { Form as DbForm, FormSubmission as DbFormSubmission } from '@ig-harness/db';
 import { resolveAccount, getAccountClient } from '../lib/accounts.js';
@@ -21,7 +22,7 @@ const forms = new Hono<Env>();
 
 function serializeForm(row: DbForm) {
   return {
-    id: row.id,
+    id: String(row.id),
     name: row.name,
     description: row.description,
     fields: JSON.parse(row.fields || '[]') as unknown[],
@@ -39,9 +40,9 @@ function serializeForm(row: DbForm) {
 
 function serializeSubmission(row: DbFormSubmission & { friend_name?: string | null }) {
   return {
-    id: row.id,
-    formId: row.form_id,
-    friendId: row.friend_id,
+    id: String(row.id),
+    formId: String(row.form_id),
+    friendId: row.friend_id===null?null:String(row.friend_id),
     friendName: row.friend_name || null,
     data: JSON.parse(row.data || '{}') as Record<string, unknown>,
     createdAt: row.created_at,
@@ -205,6 +206,7 @@ forms.post('/api/forms/:id/submit', async (c) => {
     }>();
 
     const submissionData = body.data ?? {};
+    try{assertPublicMetadataPatch(submissionData);}catch{return c.json({success:false,error:'回答データに変更できない配信状態が含まれています。'},400);}
 
     // Validate required fields
     const fields = JSON.parse(form.fields || '[]') as Array<{
@@ -228,16 +230,24 @@ forms.post('/api/forms/:id/submit', async (c) => {
 
     // Resolve friend by lineUserId or friendId
     let friendId: string | null = body.friendId ?? null;
-    if (!friendId && body.lineUserId) {
-      const friend = await getFriendByLineUserId(c.env.DB, body.lineUserId);
+    if (!friendId && body.lineUserId && form.account_id) {
+      const friend = await c.env.DB.prepare('SELECT id FROM followers WHERE igsid=? AND account_id=?').bind(body.lineUserId,form.account_id).first<{id:number}>();
       if (friend) {
         // followers.id is numeric in SQLite — coerce so downstream string-typed
         // helpers (createFormSubmission, addTagToFriend, ...) get a consistent shape.
         friendId = String(friend.id);
       }
     }
+    // Public identity hints cannot move data, tags or enrollment into another
+    // account. Resolve before storing the response or running any side effect.
+    if(body.friendId||body.lineUserId){
+      const target=friendId?await getFriendById(c.env.DB,String(friendId)):null;
+      if(!target||!form.account_id||target.account_id!==form.account_id||(body.lineUserId&&target.igsid!==body.lineUserId))return c.json({success:false,error:'回答先を確認できません。'},400);
+    }
 
-    // Save submission (friendId null if not resolved — avoids FK constraint)
+    if(!friendId)return c.json({success:false,error:'回答者を確認できません。このフォームは既存の求職者に関連づけて回答してください。'},400);
+
+    // Persist using the existing identified-respondent schema.
     const submission = await createFormSubmission(c.env.DB, {
       formId,
       friendId: friendId || null,
@@ -256,12 +266,14 @@ forms.post('/api/forms/:id/submit', async (c) => {
         sideEffects.push(
           (async () => {
             const friend = await getFriendById(db, friendId!);
-            if (!friend) return;
+            if (!friend || friend.account_id!==form.account_id) return;
             const existing = JSON.parse(friend.metadata || '{}') as Record<string, unknown>;
-            const merged = { ...existing, ...submissionData };
+            // Only authored response fields may become profile metadata.
+            const declared=Object.fromEntries(Object.entries(submissionData).filter(([key])=>fields.some(field=>field.name===key)));
+            const merged = { ...existing, ...declared };
             await db
-              .prepare(`UPDATE followers SET metadata = ?, updated_at = ? WHERE id = ?`)
-              .bind(JSON.stringify(merged), now, friendId)
+              .prepare(`UPDATE followers SET metadata = ?, updated_at = ? WHERE id = ? AND account_id = ? AND metadata IS ?`)
+              .bind(JSON.stringify(merged), now, friendId,form.account_id,friend.metadata??null)
               .run();
           })(),
         );
@@ -280,18 +292,16 @@ forms.post('/api/forms/:id/submit', async (c) => {
       // Send confirmation message via IG DM
       sideEffects.push(
         (async () => {
-          console.log('Form reply: starting for friendId', friendId);
           const friend = await getFriendById(db, friendId!);
-          if (!friend) { console.log('Form reply: friend not found'); return; }
+          if (!friend) return;
           const igsid = friend.igsid;
-          if (!igsid) { console.log('Form reply: no igsid'); return; }
-          console.log('Form reply: sending to', igsid);
+          if (!igsid) return;
           // Public submits carry no ?account_id= — the form's owning account
           // (not the deploy default) must send the confirmation DM.
           const account = form.account_id
             ? await getIgAccountById(c.env.DB, form.account_id)
             : await resolveAccount(c);
-          if (!account) { console.log('Form reply: no IG account configured'); return; }
+          if (!account) return;
           if (friend.account_id !== account.id || await messagingEligibility(db,friend.id,account.id) !== 'eligible') return;
           // Operator stop switch (U22): confirmations are sends — skip while paused.
           if (await isOutboundPaused(c.env.DB)) return;

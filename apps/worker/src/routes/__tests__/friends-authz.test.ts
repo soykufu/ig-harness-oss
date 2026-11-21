@@ -319,11 +319,11 @@ describe('PUT /api/friends/:id/metadata account-scope (FIX-A)', () => {
     const db = {
       prepare: (_sql: string) => ({
         bind: (..._args: unknown[]) => ({
-          run: async () => ({ meta: {} }),
+          run: async () => ({ meta: { changes: 1 } }),
           first: async () => null,
           all: async () => ({ results: [] }),
         }),
-        run: async () => ({ meta: {} }),
+        run: async () => ({ meta: { changes: 1 } }),
         first: async () => null,
         all: async () => ({ results: [] }),
       }),

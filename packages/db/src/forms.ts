@@ -69,19 +69,17 @@ export interface CreateFormInput {
 }
 
 export async function createForm(db: D1Database, input: CreateFormInput): Promise<Form> {
-  const id = crypto.randomUUID();
   const now = jstNow();
 
-  await db
+  const inserted=await db
     .prepare(
       `INSERT INTO forms
-         (id, name, description, fields, on_submit_tag_id, on_submit_scenario_id,
+         (name, description, fields, on_submit_tag_id, on_submit_scenario_id,
           on_submit_message_type, on_submit_message_content,
           save_to_metadata, is_active, submit_count, account_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?) RETURNING id`,
     )
     .bind(
-      id,
       input.name,
       input.description ?? null,
       input.fields,
@@ -94,9 +92,9 @@ export async function createForm(db: D1Database, input: CreateFormInput): Promis
       now,
       now,
     )
-    .run();
-
-  return (await getFormById(db, id))!;
+    .first<{id:number}>();
+  if(!inserted)throw Error('Form insert failed');
+  return (await getFormById(db, String(inserted.id)))!;
 }
 
 export interface UpdateFormInput {
@@ -174,9 +172,9 @@ export async function getFormSubmissions(
 ): Promise<FormSubmission[]> {
   const result = await db
     .prepare(
-      `SELECT fs.*, f.name as friend_name FROM form_submissions fs
-       LEFT JOIN followers f ON f.id = fs.friend_id
-       WHERE fs.form_id = ? ORDER BY fs.created_at DESC`,
+      `SELECT fs.id,fs.form_id,fs.follower_id AS friend_id,fs.answers AS data,fs.submitted_at AS created_at, f.name as friend_name FROM form_submissions fs
+       LEFT JOIN followers f ON f.id = fs.follower_id
+       WHERE fs.form_id = ? ORDER BY fs.submitted_at DESC,fs.id DESC`,
     )
     .bind(formId)
     .all<FormSubmission & { friend_name: string | null }>();
@@ -193,25 +191,15 @@ export async function createFormSubmission(
   db: D1Database,
   input: CreateFormSubmissionInput,
 ): Promise<FormSubmission> {
-  const id = crypto.randomUUID();
+  if(!input.friendId)throw Error('An identified respondent is required');
   const now = jstNow();
-
-  await db
-    .prepare(
-      `INSERT INTO form_submissions (id, form_id, friend_id, data, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-    )
-    .bind(id, input.formId, input.friendId ?? null, input.data, now)
-    .run();
-
-  // Increment submit_count
-  await db
-    .prepare(`UPDATE forms SET submit_count = submit_count + 1, updated_at = ? WHERE id = ?`)
-    .bind(now, input.formId)
-    .run();
-
-  return (await db
-    .prepare(`SELECT * FROM form_submissions WHERE id = ?`)
-    .bind(id)
-    .first<FormSubmission>())!;
+  const results=await db.batch([
+    db.prepare(`INSERT INTO form_submissions(form_id,follower_id,answers,submitted_at)
+      SELECT form.id,f.id,?,? FROM forms form JOIN followers f ON f.account_id=form.account_id
+      WHERE form.id=? AND f.id=? AND form.is_active=1 RETURNING id`).bind(input.data,now,input.formId,input.friendId),
+    db.prepare(`UPDATE forms SET submit_count=(SELECT COUNT(*) FROM form_submissions WHERE form_id=?),updated_at=? WHERE id=? AND changes()=1`).bind(input.formId,now,input.formId),
+  ]);
+  const id=(results[0].results[0] as {id:number}|undefined)?.id;
+  if(!id)throw Error('Submission insert failed');
+  return (await db.prepare(`SELECT id,form_id,follower_id AS friend_id,answers AS data,submitted_at AS created_at FROM form_submissions WHERE id=?`).bind(id).first<FormSubmission>())!;
 }

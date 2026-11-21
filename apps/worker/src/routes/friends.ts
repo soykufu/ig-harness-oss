@@ -1,4 +1,5 @@
 import {prepareHumanReplyContract,claimHumanReplyContract,finishHumanReplyContract,readHumanReplyStatus,cancelHumanReplyReview} from '../services/recruitment-human-reply.js';
+import {assertPublicMetadataPatch} from '../services/recruitment-metadata.js';
 import { recruitmentSubjectHash } from '../services/recruitment-inbound-holds.js';
 import { messagingEligibility } from '../services/messaging-window.js';
 import { Hono } from 'hono';
@@ -346,6 +347,9 @@ friends.delete('/api/friends/:id/tags/:tagId', async (c) => {
 // PUT /api/friends/:id/metadata - merge metadata fields
 friends.put('/api/friends/:id/metadata', async (c) => {
   try {
+    const body = await c.req.json<Record<string, unknown>>();
+    try{assertPublicMetadataPatch(body);}catch{return c.json({success:false,error:'配信状態の証拠は、この入力から変更できません。'},400);}
+
     const account = await resolveAccount(c);
     if (!account) return c.json({ success: false, error: 'account not found' }, 404);
 
@@ -358,15 +362,15 @@ friends.put('/api/friends/:id/metadata', async (c) => {
       return c.json({ success: false, error: 'not found' }, 404);
     }
 
-    const body = await c.req.json<Record<string, unknown>>();
     const existing = JSON.parse(friend.metadata || '{}');
     const merged = { ...existing, ...body };
     const now = jstNow();
 
-    await db
-      .prepare('UPDATE followers SET metadata = ?, updated_at = ? WHERE id = ?')
-      .bind(JSON.stringify(merged), now, friendId)
+    const saved=await db
+      .prepare('UPDATE followers SET metadata = ?, updated_at = ? WHERE id = ? AND account_id = ? AND metadata IS ?')
+      .bind(JSON.stringify(merged), now, friendId,account.id,friend.metadata??null)
       .run();
+    if(saved.meta.changes!==1)return c.json({success:false,error:'記録が変更されました。最新状態を読み直してください。'},409);
 
     const updated = await getFriendById(db, friendId);
     const tags = await getFriendTags(db, friendId);
