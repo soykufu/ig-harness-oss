@@ -4,7 +4,7 @@
 
 フォーム名だけの更新で、未指定のis_active/metadata保存/自動メッセージ/tag/scenarioを初期化しない。DB更新を指定された列だけの一文へ変更し、独立列の同時編集を上書きしない。明示null/falseは維持する。管理側update/delete/回答閲覧は選択accountと保存時の所有範囲を再照合し、別accountのtag/scenarioは作成/更新時のSQLでも拒否する。古い参照が別accountへ移ったフォームを再開せず、停止操作は可能とする。回答閲覧でも外部accountへ誤って関連した旧行を返さない。
 
-文字列のfalseや不正なfieldsを設定値に変換しない。public GET/submitの公開範囲と既存役割は変更せず、強制モードの回答は引き続きheldでプロフィール/tag/scenario/DMを実行しない。public friendId/IGSIDを本人認証と扱わず、認証元と回答者向け公開ページの接続は未了。本番のフォーム/LINE/資料受取条件は変更していない。
+文字列のfalseや不正なfieldsを設定値に変換しない。管理画面はaccount切替で旧一覧/回答を即座に隠し、古い取得を中止して新しいaccountの応答だけ採用する。取得失敗や応答形式不明を0件に変換しない。一覧未確認での操作と同一画面内の連続タップを抑止する。ブラウザ実表示/タップの実機確認は未了。public GET/submitの公開範囲と既存役割は変更せず、強制モードの回答は引き続きheldでプロフィール/tag/scenario/DMを実行しない。public friendId/IGSIDを本人認証と扱わず、認証元と回答者向け公開ページの接続は未了。本番のフォーム/LINE/資料受取条件は変更していない。
 
 ## 後続stepの不変receipt（2026-11-21・本番未適用）
 

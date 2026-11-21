@@ -1,9 +1,12 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Header from '@/components/layout/header'
-import { formsApi, type FormApi, type FormField, type FormSubmissionApi } from '@/lib/api'
+import { fetchApi,getApiAccountId,formsApi, type FormApi, type FormField, type FormSubmissionApi } from '@/lib/api'
 import { formatDateTime } from '@/lib/meta-errors'
+
+import {useAccount} from '@/contexts/account-context'
+type ReadResult<T>={success:boolean;data?:T;error?:string}
 
 const ACCENT = '#E1306C'
 
@@ -22,11 +25,11 @@ function Submissions({ form }: { form: FormApi }) {
   const [rows, setRows] = useState<FormSubmissionApi[] | null>(null)
   const [error, setError] = useState('')
   useEffect(() => {
-    let active = true
-    formsApi.submissions(form.id)
-      .then((r) => { if (active) setRows(r) })
-      .catch(() => { if (active) setError('回答を取得できませんでした') })
-    return () => { active = false }
+    const ac=new AbortController();setRows(null);setError('')
+    fetchApi<ReadResult<FormSubmissionApi[]>>(`/api/forms/${encodeURIComponent(form.id)}/submissions`,{signal:ac.signal,cache:'no-store'})
+      .then(r=>{if(ac.signal.aborted)return;if(!r.success||!Array.isArray(r.data))throw Error('回答の確認が必要です');setRows(r.data)})
+      .catch(()=>{if(!ac.signal.aborted)setError('回答を取得できませんでした。回答なしとは判断せず、再度確認してください。')})
+    return()=>ac.abort()
   }, [form.id])
   const labelOf = (key: string) => form.fields.find((f) => f.name === key)?.label ?? key
   if (error) return <p className="text-xs text-red-600">{error}</p>
@@ -55,6 +58,10 @@ function Submissions({ form }: { form: FormApi }) {
 }
 
 export default function FormsPage() {
+  const {selectedAccountId}=useAccount()
+  const selectedRef=useRef(selectedAccountId);selectedRef.current=selectedAccountId
+  const readVersion=useRef(0),readAbort=useRef<AbortController|null>(null),mutationBusy=useRef(false)
+  const [formsScope,setFormsScope]=useState<string|null>(null)
   const [forms, setForms] = useState<FormApi[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -64,28 +71,36 @@ export default function FormsPage() {
   const [saving, setSaving] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
 
+  const scopeCurrent=(account:string|null)=>!!account&&selectedRef.current===account&&getApiAccountId()===account
+  const dataReady=!!selectedAccountId&&formsScope===selectedAccountId
+  const visibleForms=dataReady?forms:[]
   const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
+    const account=selectedAccountId,version=++readVersion.current
+    readAbort.current?.abort();const ac=new AbortController();readAbort.current=ac
+    setForms([]);setFormsScope(null);setLoading(true);setError('')
+    if(!account||getApiAccountId()!==account){setLoading(false);return}
+    const current=()=>!ac.signal.aborted&&readVersion.current===version&&selectedRef.current===account&&getApiAccountId()===account
     try {
-      setForms(await formsApi.list())
+      const response=await fetchApi<ReadResult<FormApi[]>>('/api/forms',{signal:ac.signal,cache:'no-store'})
+      if(!current())return
+      if(!response.success||!Array.isArray(response.data))throw Error('フォーム一覧の確認が必要です')
+      setForms(response.data);setFormsScope(account)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'フォームの読み込みに失敗しました')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+      if(current())setError(err instanceof Error?err.message:'フォームの読み込みに失敗しました')
+    } finally {if(current())setLoading(false)}
+  }, [selectedAccountId])
 
-  useEffect(() => { load() }, [load])
+  useEffect(()=>{setOpenId(null);setName('');setDescription('');setFields([{...EMPTY_FIELD,label:'お名前',required:true}]);void load();return()=>{readAbort.current?.abort();readVersion.current++}},[load])
 
   const updateField = (i: number, patch: Partial<DraftField>) =>
     setFields((prev) => prev.map((f, idx) => (idx === i ? { ...f, ...patch } : f)))
 
   const handleCreate = async () => {
+    const account=selectedAccountId;if(!dataReady||!scopeCurrent(account)||mutationBusy.current)return
     const filled = fields.filter((f) => f.label.trim())
     if (!name.trim()) { setError('フォーム名を入力してください'); return }
     if (filled.length === 0) { setError('項目を1つ以上入力してください'); return }
-    setSaving(true)
+    mutationBusy.current=true;setSaving(true)
     setError('')
     try {
       await formsApi.create({
@@ -93,36 +108,33 @@ export default function FormsPage() {
         description: description.trim() || null,
         fields: filled.map((f, i) => ({ name: `field_${i + 1}`, label: f.label.trim(), type: f.type, required: f.required })),
       })
+      if(!scopeCurrent(account))return
       setName('')
       setDescription('')
       setFields([{ label: 'お名前', type: 'text', required: true }])
       await load()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'フォームの作成に失敗しました')
+      if(scopeCurrent(account))setError(err instanceof Error ? err.message : 'フォームの作成に失敗しました')
     } finally {
-      setSaving(false)
+      mutationBusy.current=false;setSaving(false)
     }
   }
 
   const handleToggle = async (f: FormApi) => {
-    setError('')
-    try {
-      await formsApi.update(f.id, { isActive: !f.isActive })
-      await load()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '更新に失敗しました')
-    }
+    const account=selectedAccountId;if(!dataReady||!scopeCurrent(account)||mutationBusy.current)return
+    mutationBusy.current=true;setSaving(true);setError('')
+    try {await formsApi.update(f.id,{isActive:!f.isActive});if(scopeCurrent(account))await load()}
+    catch(err){if(scopeCurrent(account))setError(err instanceof Error?err.message:'更新に失敗しました')}
+    finally{mutationBusy.current=false;setSaving(false)}
   }
 
   const handleDelete = async (f: FormApi) => {
-    if (!confirm(`フォーム「${f.name}」を削除しますか？\n回答データも参照できなくなります。`)) return
-    setError('')
-    try {
-      await formsApi.remove(f.id)
-      await load()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '削除に失敗しました')
-    }
+    const account=selectedAccountId;if(!dataReady||!scopeCurrent(account)||mutationBusy.current)return
+    if(!confirm(`フォーム「${f.name}」を削除しますか？\n回答データも参照できなくなります。`))return
+    mutationBusy.current=true;setSaving(true);setError('')
+    try {await formsApi.remove(f.id);if(scopeCurrent(account))await load()}
+    catch(err){if(scopeCurrent(account))setError(err instanceof Error?err.message:'削除に失敗しました')}
+    finally{mutationBusy.current=false;setSaving(false)}
   }
 
   return (
@@ -168,7 +180,7 @@ export default function FormsPage() {
             <button type="button" onClick={() => setFields((prev) => [...prev, { ...EMPTY_FIELD }])}
               className="mt-2 text-xs underline text-kumo-subtle">+ 項目を追加</button>
           </div>
-          <button type="button" onClick={handleCreate} disabled={saving}
+          <button type="button" onClick={handleCreate} disabled={saving||!dataReady}
             className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50" style={{ backgroundColor: ACCENT }}>
             {saving ? '作成中...' : 'フォームを作成'}
           </button>
@@ -177,13 +189,13 @@ export default function FormsPage() {
 
       <section className="bg-kumo-base rounded-xl border border-kumo-line p-5">
         <h2 className="text-sm font-semibold text-kumo-default mb-3">フォーム一覧</h2>
-        {loading ? (
+        {!selectedAccountId ? (<p className="text-sm text-kumo-subtle">Instagramアカウントを選択してください。</p>) : loading ? (
           <p className="text-sm text-kumo-subtle">読み込み中...</p>
-        ) : forms.length === 0 ? (
+        ) : !dataReady ? (<p className="text-sm text-red-600">一覧を確認できていません。<button type="button" onClick={()=>void load()} className="ml-2 underline">再度確認</button></p>) : visibleForms.length === 0 ? (
           <p className="text-sm text-kumo-subtle">フォームがありません</p>
         ) : (
           <ul className="divide-y divide-kumo-line">
-            {forms.map((f) => (
+            {visibleForms.map((f) => (
               <li key={f.id} className="py-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -203,10 +215,10 @@ export default function FormsPage() {
                       className="px-2 py-1 text-xs border border-kumo-line rounded hover:bg-kumo-tint">
                       {openId === f.id ? '回答を閉じる' : `回答を見る（${f.submitCount}）`}
                     </button>
-                    <button type="button" onClick={() => handleToggle(f)} className="px-2 py-1 text-xs border border-kumo-line rounded hover:bg-kumo-tint">
+                    <button type="button" disabled={saving} onClick={() => handleToggle(f)} className="px-2 py-1 text-xs border border-kumo-line rounded hover:bg-kumo-tint">
                       {f.isActive ? '受付停止' : '受付再開'}
                     </button>
-                    <button type="button" onClick={() => handleDelete(f)} className="px-2 py-1 text-xs text-red-500 border border-red-200 rounded hover:bg-red-50">
+                    <button type="button" disabled={saving} onClick={() => handleDelete(f)} className="px-2 py-1 text-xs text-red-500 border border-red-200 rounded hover:bg-red-50">
                       削除
                     </button>
                   </div>
