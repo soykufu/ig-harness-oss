@@ -1,4 +1,4 @@
-import {prepareHumanReplyContract,claimHumanReplyContract,finishHumanReplyContract} from '../services/recruitment-human-reply.js';
+import {prepareHumanReplyContract,claimHumanReplyContract,finishHumanReplyContract,readHumanReplyStatus} from '../services/recruitment-human-reply.js';
 import { recruitmentSubjectHash } from '../services/recruitment-inbound-holds.js';
 import { messagingEligibility } from '../services/messaging-window.js';
 import { Hono } from 'hono';
@@ -472,6 +472,19 @@ friends.post('/api/friends/:id/human-reply-review', requireRole('owner','admin')
   await prepareHumanReplyContract(c.env.DB,{accountId:account.id,followerId,actorId:c.get('staff').id,nonce:c.req.header('Idempotency-Key')??'',text:body.text},true);
   return c.json({success:true,data:{prepared:true,maySend:false,expiresInSeconds:60}});
  }catch{return c.json({success:false,error:'返信内容または受信状態を確認できません。送信せず確認を保留してください。'},409);}
+});
+
+friends.get('/api/friends/:id/human-reply-status', requireRole('owner','admin'), async c=>{
+ c.header('Cache-Control','no-store');
+ const id=Number(c.req.param('id'));const nonce=c.req.header('Idempotency-Key')??'';
+ if(!Number.isSafeInteger(id)||id<1||!/^[A-Za-z0-9_-]{16,100}$/.test(nonce))return c.json({success:false,error:'Invalid operation'},400);
+ try{
+  const accountId=c.req.query('account_id');
+  const account=accountId?await c.env.DB.prepare('SELECT id FROM ig_accounts WHERE id=?').bind(accountId).first<{id:string}>():await c.env.DB.prepare('SELECT id FROM ig_accounts WHERE is_default=1 LIMIT 1').first<{id:string}>();
+  const data=account?await readHumanReplyStatus(c.env.DB,account.id,id,c.get('staff').id,nonce):null;
+  if(!data)return c.json({success:false,error:'記録を確認できません。再送せず照合してください。'},404);
+  return c.json({success:true,data});
+ }catch{return c.json({success:false,error:'返信記録を取得できません。未送信とは判断できません。'},503);}
 });
 
 // A separate, explicit reviewed text action; never resumes automation.

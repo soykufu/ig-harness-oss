@@ -12,7 +12,8 @@ async function fixture(){const {db,sqlite}=await testDatabase();close.push(()=>s
  sqlite.exec("UPDATE ig_accounts SET token_expires_at='2030-01-01T00:00:00Z'");
  const env={DB:db,RECRUITMENT_LEDGER_ENFORCEMENT:'1',OUTBOUND_PREPARATION_LOCK:'0'};
  const post=(id=1,account='a',kind='human-reply-review',text='相談への回答')=>app.fetch(new Request(`https://test.invalid/api/friends/${id}/${kind}?account_id=${account}`,{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':'operator-action-123456'},body:JSON.stringify({text,actorId:'injected'})}),env);
- return {db,sqlite,post,env,setRole:(r:string)=>{role=r;}};}
+ const status=(id=1,account='a')=>app.fetch(new Request(`https://test.invalid/api/friends/${id}/human-reply-status?account_id=${account}`,{headers:{'Idempotency-Key':'operator-action-123456'}}),env);
+ return {db,sqlite,post,status,env,setRole:(r:string)=>{role=r;}};}
 it('prepares only a draft using the authenticated actor while paused, with no send or resume',async()=>{
  const {sqlite,post}=await fixture();const res=await post();expect(res.status).toBe(200);expect(res.headers.get('Cache-Control')).toBe('no-store');expect(await res.json()).toMatchObject({data:{prepared:true,maySend:false}});
  expect(sqlite.prepare('SELECT actor_id,status FROM recruitment_human_reply_contracts').get()).toMatchObject({actor_id:'owner',status:'prepared'});expect(sqlite.prepare("SELECT value FROM integration_settings WHERE key='outbound_paused'").get()?.value).toBe('1');expect(sqlite.prepare('SELECT COUNT(*) n FROM messages_log').get()?.n).toBe(0);expect((await post()).status).toBe(409);
@@ -31,13 +32,28 @@ it('sends one reviewed text only, preserving holds and preventing repeat claims'
  expect(fetch).toHaveBeenCalledOnce();expect(sqlite.prepare('SELECT status FROM recruitment_human_reply_contracts').get()?.status).toBe('sent');expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_inbound_holds').get()?.n).toBe(1);
  expect((await post(1,'a','human-replies')).status).toBe(409);expect(fetch).toHaveBeenCalledOnce();
 });
-it.each(['unreviewed','changed-body','paused','preparation-lock','stop-before-claim','timeout','wrong-ack'])( 'does not permit unsafe human delivery: %s',async mode=>{
+it.each(['unreviewed','changed-body','paused','preparation-lock','stop-before-claim','timeout','wrong-ack','log-failure'])( 'does not permit unsafe human delivery: %s',async mode=>{
  const {sqlite,post,env}=await fixture();const fetch=vi.fn(async()=>{if(mode==='timeout')throw Error('offline');return new Response(JSON.stringify({message_id:'one',recipient_id:mode==='wrong-ack'?'foreign':'student'}));});vi.stubGlobal('fetch',fetch);
  if(mode!=='unreviewed')expect((await post()).status).toBe(200);
  if(mode!=='paused')sqlite.exec("UPDATE integration_settings SET value='0'");
  if(mode==='preparation-lock')env.OUTBOUND_PREPARATION_LOCK='1';
+ if(mode==='log-failure')sqlite.exec("CREATE TRIGGER fail_log BEFORE INSERT ON messages_log BEGIN SELECT RAISE(ABORT,'test log failure'); END");
  if(mode==='stop-before-claim')sqlite.prepare("UPDATE recruitment_inbound_holds SET state='stopped'").run();
  const res=await post(1,'a','human-replies',mode==='changed-body'?'changed':'相談への回答');expect(res.status).toBe(409);
- expect(fetch).toHaveBeenCalledTimes(['timeout','wrong-ack'].includes(mode)?1:0);
+ expect(fetch).toHaveBeenCalledTimes(['timeout','wrong-ack','log-failure'].includes(mode)?1:0);
  const count=fetch.mock.calls.length;expect((await post(1,'a','human-replies',mode==='changed-body'?'changed':'相談への回答')).status).toBe(409);expect(fetch).toHaveBeenCalledTimes(count);
+});
+
+it('reads only matching human reply history without changing data, retry rights or receipt claims',async()=>{
+ const {sqlite,post,status}=await fixture();vi.stubGlobal('fetch',async()=>new Response(JSON.stringify({message_id:'one',recipient_id:'student'})));
+ expect((await status()).status).toBe(404);await post();const prepared=await status();expect(await prepared.json()).toMatchObject({data:{status:'prepared',apiAcknowledged:false,mayRetry:false,recipientReceipt:'unknown'}});
+ sqlite.exec("UPDATE integration_settings SET value='0'");await post(1,'a','human-replies');
+ const n=sqlite.prepare('SELECT total_changes() n').get()?.n;const sent=await status();expect(sent.headers.get('Cache-Control')).toBe('no-store');expect(await sent.json()).toMatchObject({data:{status:'sent',apiAcknowledged:true,mayRetry:false,recipientReceipt:'unknown'}});
+ expect(sqlite.prepare('SELECT total_changes() n').get()?.n).toBe(n);expect((await status(1,'b')).status).toBe(404);expect((await status(2,'a')).status).toBe(404);
+ sqlite.exec('DROP TABLE recruitment_human_reply_contracts');expect((await status()).status).toBe(503);
+});
+it('never mistakes an uncertain or mismatched ledger for a confirmed reply',async()=>{
+ const {sqlite,post,status}=await fixture();vi.stubGlobal('fetch',async()=>new Response(JSON.stringify({message_id:'one',recipient_id:'student'})));await post();sqlite.exec("UPDATE integration_settings SET value='0'");await post(1,'a','human-replies');
+ sqlite.exec("UPDATE recruitment_outbound_operations SET owner_epoch='wrong'");expect(await(await status()).json()).toMatchObject({data:{apiAcknowledged:false,mayRetry:false}});
+ sqlite.exec("UPDATE recruitment_human_reply_contracts SET status='uncertain'");expect(await(await status()).json()).toMatchObject({data:{status:'uncertain',apiAcknowledged:false,mayRetry:false}});
 });
