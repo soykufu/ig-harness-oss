@@ -1,5 +1,11 @@
 # 採用DM共通台帳の組込み条件
 
+## 承認文面を切らないtemplate準備（2026-11-21・本番未適用）
+
+強制モードのCTA/後続button templateは、承認文面やlabelを黙ってsliceしない。既存のtitle/subtitle 80、button 20の保守的な予算を広げず、絵文字・国旗・結合文字をgrapheme境界で分け、全ての承認文字が収まる場合だけ送信計画へ進む。長すぎる本文/label、不正surrogate、文字を壊さず分割できない場合は保留する。画像付き後続でも最初の画像から送らない。旧モードの文面/送信は変更しない。
+
+[Meta Generic template](https://developers.facebook.com/documentation/business-messaging/instagram-messaging/generic-template)の構造/80文字制約を2026-11-21に確認。UnicodeのAPI受理をローカル試験だけで証明しない。実端末/Metaの受理は未検証で、機能/flagsを有効化しない。
+
 ## Form管理の保存・account照合（2026-11-21・本番未適用）
 
 フォーム名だけの更新で、未指定のis_active/metadata保存/自動メッセージ/tag/scenarioを初期化しない。DB更新を指定された列だけの一文へ変更し、独立列の同時編集を上書きしない。明示null/falseは維持する。管理側update/delete/回答閲覧は選択accountと保存時の所有範囲を再照合し、別accountのtag/scenarioは作成/更新時のSQLでも拒否する。古い参照が別accountへ移ったフォームを再開せず、停止操作は可能とする。回答閲覧でも外部accountへ誤って関連した旧行を返さない。

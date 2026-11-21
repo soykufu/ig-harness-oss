@@ -1,3 +1,4 @@
+import {recruitmentTemplateCopy} from './recruitment-template-copy.js';
 import {sha256} from '../lib/security.js';
 import {renderRichActions,richActionMessage,type RichAction} from '@ig-harness/ig-sdk';
 import {getEngagementGate,getGateDelivery,logMessage,type EngagementGate,type GateDelivery} from '@ig-harness/db';
@@ -87,8 +88,8 @@ export async function sendRecruitmentGateCta(db:D1Database,gate:EngagementGate,d
  let actions:RichAction[];
  if(rich)actions=renderRichActions(delivery.igsid,JSON.parse(rich.blocks),{gateId:gate.id,deliveryId:delivery.id,rewardUrl:gate.reward_url});
  else{
-  if(!gate.initial_dm_text.trim()||gate.initial_dm_text.length>160||!gate.initial_dm_button_label.trim()||gate.initial_dm_button_label.length>20)throw Error('CTA text exceeds supported template limits');
-  actions=[{type:'template',elements:[{title:gate.initial_dm_text.slice(0,80),subtitle:gate.initial_dm_text.length>80?gate.initial_dm_text.slice(80,160):undefined,buttons:[{type:'postback',title:gate.initial_dm_button_label,payload:`CHECK_FOLLOW:${gate.id}:${delivery.id}`}]}]}];
+  const copy=recruitmentTemplateCopy(gate.initial_dm_text,gate.initial_dm_button_label);
+  actions=[{type:'template',elements:[{title:copy.title,subtitle:copy.subtitle,buttons:[{type:'postback',title:copy.buttonTitle,payload:`CHECK_FOLLOW:${gate.id}:${delivery.id}`}]}]}];
  }
  const messages=actions.map(richActionMessage),payloadVersion=await sha256(JSON.stringify(messages));
  const proof:GateCtaProof={deliveryId:delivery.id,followerId:delivery.follower_id,igsid:delivery.igsid,mode,eventKey:context.eventKey,definitionVersion,sourceHash,messages,payloadVersion};

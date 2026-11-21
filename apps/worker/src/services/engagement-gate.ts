@@ -1,3 +1,4 @@
+import {recruitmentTemplateCopy} from './recruitment-template-copy.js';
 import {claimGateFollowupReceipt,prepareGateFollowupReceipt,uncertainGateFollowupReceipt,completeGateFollowupReceipt} from './recruitment-gate-followup-receipt.js';
 import type {RecruitmentEnrollmentGuard} from '@ig-harness/db';
 import {isRecruitmentDeliveryWindow,assertRecruitmentAutomationAdmission} from './recruitment-automation-admission.js';
@@ -693,7 +694,8 @@ async function sendFollowupStep(
   if(step.button_label&&step.button_url){
     let buttonUrl=step.button_url.replace(/\{\{?\s*REWARD_URL\s*\}?\}/g,()=>trackedRewardUrl);
     if(workerBaseUrl&&/^https?:\/\//.test(buttonUrl)&&!buttonUrl.includes('/click/'))buttonUrl=await wrapClickTracking(workerBaseUrl,gate.id,buttonUrl,igsid,igAccount?.security);
-    actions.push({type:'template',elements:[{title:expandedText.slice(0,80),subtitle:expandedText.length>80?expandedText.slice(80,160):undefined,buttons:[{type:'web_url',title:step.button_label.slice(0,20),url:buttonUrl}]}]});
+    const copy=guarded?recruitmentTemplateCopy(expandedText,step.button_label):{title:expandedText.slice(0,80),subtitle:expandedText.length>80?expandedText.slice(80,160):undefined,buttonTitle:step.button_label.slice(0,20)};
+    actions.push({type:'template',elements:[{title:copy.title,subtitle:copy.subtitle,buttons:[{type:'web_url',title:copy.buttonTitle,url:buttonUrl}]}]});
   }else actions.push({type:'text',text:expandedText});
   if(guarded){
     const messages=actions.map(richActionMessage),payloadVersion=await gateFollowupPayloadVersion(messages);
