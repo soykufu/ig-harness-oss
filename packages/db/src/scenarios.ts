@@ -104,16 +104,14 @@ export async function createScenario(
   db: D1Database,
   input: CreateScenarioInput,
 ): Promise<Scenario> {
-  const id = crypto.randomUUID();
   const now = jstNow();
 
-  await db
+  return (await db
     .prepare(
-      `INSERT INTO scenarios (id, name, description, trigger_type, trigger_tag_id, is_active, account_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+      `INSERT INTO scenarios (name, description, trigger_type, trigger_tag_id, is_active, account_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 1, ?, ?, ?) RETURNING *`,
     )
     .bind(
-      id,
       input.name,
       input.description ?? null,
       input.triggerType,
@@ -122,11 +120,6 @@ export async function createScenario(
       now,
       now,
     )
-    .run();
-
-  return (await db
-    .prepare(`SELECT * FROM scenarios WHERE id = ?`)
-    .bind(id)
     .first<Scenario>())!;
 }
 
@@ -209,16 +202,14 @@ export async function createScenarioStep(
   db: D1Database,
   input: CreateScenarioStepInput,
 ): Promise<ScenarioStep> {
-  const id = crypto.randomUUID();
   const now = jstNow();
 
-  await db
+  return (await db
     .prepare(
-      `INSERT INTO scenario_steps (id, scenario_id, step_order, delay_minutes, message_type, body, condition_type, condition_value, next_step_on_false, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO scenario_steps (scenario_id, step_order, delay_minutes, message_type, body, condition_type, condition_value, next_step_on_false, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     )
     .bind(
-      id,
       input.scenarioId,
       input.stepOrder,
       input.delayMinutes ?? 0,
@@ -229,11 +220,6 @@ export async function createScenarioStep(
       input.nextStepOnFalse ?? null,
       now,
     )
-    .run();
-
-  return (await db
-    .prepare(`SELECT * FROM scenario_steps WHERE id = ?`)
-    .bind(id)
     .first<ScenarioStep>())!;
 }
 
