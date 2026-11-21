@@ -1,5 +1,5 @@
 import {readStoppedRuntimeSnapshot,isStoppedRuntimeReadPath} from './stopped-runtime-snapshot.mjs';
-import {readStoppedInstallationSnapshot} from './stopped-installation-snapshot.mjs';
+import {readStoppedInstallationSnapshot,migrationLedgerFingerprint} from './stopped-installation-snapshot.mjs';
 const origin = 'https://soykufu-ig-harness-20261119.soykufu.workers.dev';
 const key = process.env.IG_HARNESS_API_KEY;
 const cfToken = process.env.CLOUDFLARE_API_TOKEN;
@@ -33,7 +33,7 @@ try {
     return body.result[0].results;
   };
   const snapshot=await readStoppedInstallationSnapshot({repoDir:process.cwd(),query});
-  const runtime=await readStoppedRuntimeSnapshot({read:async path=>{
+  const runtime=await readStoppedRuntimeSnapshot({sourceSha:process.env.GITHUB_SHA,migrationInventoryHash:snapshot.migrationLedgerSha256,recoveryKey:key,read:async path=>{
     if(!isStoppedRuntimeReadPath(path))throw new Error('Unexpected runtime read');
     const r=await fetch('https://api.cloudflare.com/client/v4'+path,{method:'GET',headers:{Authorization:`Bearer ${cfToken}`},signal:AbortSignal.timeout(15000)});
     const data=await r.json();if(!r.ok||data.success!==true)throw new Error('Runtime metadata unavailable');return data.result;
@@ -41,6 +41,8 @@ try {
   // Recheck stop after metadata reads. The checks do not authorize deployment.
   const final=(await query("SELECT (SELECT value FROM integration_settings WHERE key='outbound_paused') AS paused,(SELECT COUNT(*) FROM ig_accounts) AS accounts,(SELECT COUNT(*) FROM followers) AS followers"))[0];
   if(final?.paused!=='1'||final.accounts!==0||final.followers!==0)throw new Error('Stopped empty installation verification failed');
+  const finalLedger=await query('SELECT name,sha256 FROM ig_schema_migrations');
+  if(migrationLedgerFingerprint(finalLedger)!==snapshot.migrationLedgerSha256)throw new Error('Migration ledger changed during runtime verification');
   console.log('Stopped preparation snapshot (read only): '+JSON.stringify({...snapshot,...runtime}));
   console.log(`Verified Japanese login HTML/JavaScript: ${origin}/login/`);
   console.log('Verified unauthenticated API=401, authenticated API=200, database healthy, outbound paused, accounts=0, followers=0.');

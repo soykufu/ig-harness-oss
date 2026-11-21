@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs']
+    paths: ['.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs']
 permissions:
   contents: read
 jobs:
