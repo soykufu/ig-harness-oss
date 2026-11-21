@@ -38,5 +38,8 @@ export async function readStoppedRuntimeSnapshot({read,sourceSha,migrationInvent
  // This covers direct R2 domains only. A bound Worker can expose objects
  // independently, so do not call this a private backup destination.
  try{const [managed,custom]=await Promise.all([safeRead(r2Domains+'/managed'),safeRead(r2Domains+'/custom')]);result.r2DirectPublicAccessDisabled=managed?.enabled===false&&Array.isArray(custom?.domains)&&custom.domains.every(d=>d?.enabled===false);}catch{/* No domain change, fallback or retry. */}
+ // Metadata can change during the later provider reads. Do not retain proof
+ // for an earlier serving version when the final observation is unavailable.
+ if(result.deploymentStable)try{const final=active(await safeRead(worker+'/deployments'));if(JSON.stringify(first)!==JSON.stringify(final))throw Error('Deployment changed');}catch{Object.assign(result,{deploymentEvidenceAvailable:false,deploymentStable:false,deployedBindingsVerified:false,preparationLockVerified:false,extraFlagsVerified:false,timeTravelBookmarkAvailable:false});delete result.deploymentFingerprint;delete result.timeTravelRecoveryProof;delete result.timeTravelBookmarkSha256;}
  return result;
 }
