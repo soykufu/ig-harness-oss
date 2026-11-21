@@ -1,5 +1,13 @@
 # 採用DM共通台帳の組込み条件
 
+## 停止中実環境の読取結果（2026-11-21 18:46 JST）
+
+[既存read-only smoke run 44891150425](https://github.com/soykufu/ig-harness-oss/actions/runs/44891150425)は成功。指定D1の送信停止1/account0/follower0、移行台帳27件のname/hash一致を正規Actions内だけで確認した。最新ソース40件に対して不足は0028〜0040の13件、既適用ledgerの改変・不明将来移行・重複は0件。これはledger照合であり、未適用schemaの実体が利用可能という意味ではない。
+
+実DBは変更していない。backup・既存配置bindings・準備lock・追加flagsの最新実証は今回の読取範囲外で、schemaReady=false/deploymentAuthorized=falseを維持する。Secrets値は取得/出力せず正規実行環境でのみ使った。配置/Meta認証/送信/LINEの実運用開始は行っていない。
+
+履歴レビューは予定receiptと全slotをまとめて読み、100件のreceiptでもD1 query回数を8回以内に抑える試験を追加した。slot読取上限に達した場合は成功判定を止め、moreMayExist=true/照合待ちを維持する。取得件数上限は再送・保留解除の根拠にしない。
+
 ## 既存受入モデルとの整合（2026-11-21・参照実装のみ）
 
 soykufu-recruitment-policyのquestion/visit/interviewは、停止・辞退・不明送信を解除せず有人キューへ回し、案内取消し・自動加入なしを明示する。これは送信許可ではなく、実際の有人返信は別の認証済み一回契約が必要。30日コホートは既存の実登録/実来店証拠と人の実施確認の条件を維持し、同じevent IDのcandidate/kind/日時/根拠/有人確認/社内テスト指定が食い違えば入力順で捨てず照合待ちにする。不正な時刻・無限の観察窓・空白だけの根拠を計測へ含めない。15受入試験は合格。実台帳04・LINE登録・実見学/面接の接続と実績照合は未実施で、率向上の証明ではない。
