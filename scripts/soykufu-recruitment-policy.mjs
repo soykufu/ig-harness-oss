@@ -41,10 +41,14 @@ export function nextRecruitmentAction(s, request, now = Date.now()) {
 
 // Event timestamps represent the actual occurrence, not data entry time.
 // Registration counts require a real LINE registration event; clicks do not count.
-export function recruitmentCohort(events, asOf, windowDays = 30) {
+function observationWindow(asOf,windowDays) {
   if (!Number.isSafeInteger(asOf) || asOf<0 || !Number.isFinite(windowDays) || !(windowDays > 0)) throw new Error('Invalid observation window');
   const windowMs=windowDays*86400000;
   if(!Number.isSafeInteger(windowMs))throw new Error('Invalid observation window');
+  return windowMs;
+}
+export function recruitmentCohort(events, asOf, windowDays = 30) {
+  const windowMs=observationWindow(asOf,windowDays);
   const rows = new Map();
   const seen = new Map(), evidence=new Map();
   for (const e of events) {
@@ -60,7 +64,7 @@ export function recruitmentCohort(events, asOf, windowDays = 30) {
     if (!rows.has(e.candidateId)) rows.set(e.candidateId, []);
     rows.get(e.candidateId).push(e);
   }
-  let mature = 0, interviews = 0, visits = 0, hires=0, interviewedHires=0, immature = 0;
+  let mature = 0, interviews = 0, visits = 0, hires=0, interviewedHires=0, visitedInterviews=0, immature = 0;
   for (const list of rows.values()) {
     if (list.some(e => e.internal === true)) continue;
     const registrations = list.filter(e => e.kind === 'line_registered' && typeof e.evidenceId==='string' && e.evidenceId.trim()).sort((a,b) => a.at-b.at);
@@ -75,9 +79,24 @@ export function recruitmentCohort(events, asOf, windowDays = 30) {
     const interviewed=occurred('interview_attended'),hired=occurred('hire_confirmed');
     if (interviewed) interviews++;
     if (hired) hires++;
+    // Count a visit -> interview transition only when both actually occurred
+    // in that order. An interview without a visit is still a valid interview,
+    // but missing visit evidence does not prove a requested direct route.
+    if (list.some(v=>v.kind==='visit_attended'&&typeof v.evidenceId==='string'&&v.evidenceId.trim()&&v.confirmedByHuman===true&&v.at>=registeredAt&&v.at<=cutoff&&list.some(i=>i.kind==='interview_attended'&&typeof i.evidenceId==='string'&&i.evidenceId.trim()&&i.confirmedByHuman===true&&i.at>=v.at&&i.at<=cutoff))) visitedInterviews++;
     // A hire does not imply that an interview was actually attended. Only
     // observed interviews preceding an observed hire enter the stage ratio.
     if(hired&&list.some(i=>i.kind==='interview_attended'&&typeof i.evidenceId==='string'&&i.evidenceId.trim()&&i.confirmedByHuman===true&&i.at>=registeredAt&&i.at<=cutoff&&list.some(h=>h.kind==='hire_confirmed'&&typeof h.evidenceId==='string'&&h.evidenceId.trim()&&h.confirmedByHuman===true&&h.at>=i.at&&h.at<=cutoff)))interviewedHires++;
   }
-  return { windowDays, matureRegistrations: mature, immatureRegistrations: immature, visitAttendees: visits, interviewAttendees: interviews, confirmedHires:hires, visitRate:mature?visits/mature:null, interviewRate: mature ? interviews / mature : null, hireRate:mature?hires/mature:null, interviewToHireRate:interviews?interviewedHires/interviews:null };
+  return { windowDays, matureRegistrations: mature, immatureRegistrations: immature, visitAttendees: visits, interviewAttendees: interviews, confirmedHires:hires, visitToInterviewAttendees:visitedInterviews, visitRate:mature?visits/mature:null, interviewRate: mature ? interviews / mature : null, hireRate:mature?hires/mature:null, visitToInterviewRate:visits?visitedInterviews/visits:null, interviewToHireRate:interviews?interviewedHires/interviews:null };
+}
+
+/** Display contract only, not a source authenticator. The existing collectors
+ * must establish complete registration + actual-outcome coverage first.
+ * Unconnected/partial data never becomes a zero-count performance report. */
+export function recruitmentMeasurementReport({events,asOf,windowDays=30,collectionState='unmeasured'}) {
+  observationWindow(asOf,windowDays);
+  if(!['unmeasured','partial','complete'].includes(collectionState))throw Error('Invalid measurement collection state');
+  if(collectionState!=='complete')return{status:collectionState,windowDays,metrics:null,improvementVerified:false};
+  const metrics=recruitmentCohort(events,asOf,windowDays);
+  return{status:'complete',windowDays,metrics,improvementVerified:false};
 }
