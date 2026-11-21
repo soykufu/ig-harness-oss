@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -8,9 +8,10 @@ import {
   lineConnectionsApi,
   richMessagesApi,
   postsApi,
-  deliveryFailuresApi,
   COMMENT_REPLY_MODE_LABELS,
   DELIVERY_FAILURE_SOURCE_LABELS,
+  fetchApi,
+  getApiAccountId,
   type DeliveryFailure,
   type DeliveryFailureSource,
   type EngagementGate,
@@ -23,6 +24,9 @@ import GateDeliveryReview from '@/components/gate-delivery-review'
 import Header from '@/components/layout/header'
 import RichMessagePreview from '@/components/rich-message-preview'
 import { formatDateTime, metaErrorHint } from '@/lib/meta-errors'
+import { useAccount } from '@/contexts/account-context'
+import { campaignActivity, type CampaignActivity } from '@/lib/campaign-activity'
+import { ScopedReadEpoch } from '@/lib/scoped-read-epoch'
 
 /**
  * Next.js static export bakes the generateStaticParams value ('_') into
@@ -34,7 +38,8 @@ function resolveIdFromPath(): string | null {
   if (typeof window === 'undefined') return null
   const match = window.location.pathname.match(/\/campaigns\/([^/]+)\/?$/)
   if (!match) return null
-  const id = decodeURIComponent(match[1])
+  let id:string
+  try{id = decodeURIComponent(match[1])}catch{return null}
   if (!id || id === '_') return null
   return id
 }
@@ -55,9 +60,15 @@ const STATUS_LABELS: Record<string, string> = {
 
 export default function CampaignDetailClient() {
   const router = useRouter()
+  const {selectedAccountId}=useAccount()
+  const selectedRef=useRef(selectedAccountId);selectedRef.current=selectedAccountId
+  const readEpoch=useRef<ScopedReadEpoch|null>(null),mutationBusy=useRef(false)
+  if(!readEpoch.current)readEpoch.current=new ScopedReadEpoch(()=>selectedRef.current===getApiAccountId()?selectedRef.current:null)
   const [id, setId] = useState<string | null>(null)
 
-  const [gate, setGate] = useState<EngagementGate | null>(null)
+  const [loadedGate, setGate] = useState<EngagementGate | null>(null)
+  const [gateScope,setGateScope]=useState<string|null>(null)
+  const gate=selectedAccountId&&gateScope===selectedAccountId?loadedGate:null
   const [richMessageMap, setRichMessageMap] = useState<Record<string, RichMessage>>({})
   const [targetMediaMap, setTargetMediaMap] = useState<Record<string, MediaItem>>({})
   /** LINE Harness connection registry used to resolve `line_connection_id`
@@ -73,12 +84,17 @@ export default function CampaignDetailClient() {
   }, [])
 
   const load = useCallback(async () => {
-    if (!id) return
+    const account=selectedAccountId,lease=readEpoch.current!.begin(account)
+    setGate(null);setGateScope(null);setRichMessageMap({});setTargetMediaMap({})
     setLoading(true)
     setError('')
+    if(!id||!lease.current()){setLoading(false);return}
+    const current=lease.current
     try {
-      const data = await engagementGatesApi.get(id)
-      setGate(data)
+      const response=await fetchApi<{success:boolean;data?:EngagementGate}>(`/api/engagement-gates/${encodeURIComponent(id)}`,{signal:lease.signal,cache:'no-store'})
+      if(!current())return
+      if(!response.success||!response.data||response.data.id!==id)throw Error('Campaign requires verification')
+      const data=response.data
 
       const ids = [
         data.initial_dm_rich_message_id,
@@ -87,6 +103,7 @@ export default function CampaignDetailClient() {
       ].filter((x): x is string => !!x)
       if (ids.length > 0) {
         const results = await Promise.all(ids.map((x) => richMessagesApi.get(x)))
+        if(!current())return
         const map: Record<string, RichMessage> = {}
         for (const r of results) if (r) map[r.id] = r
         setRichMessageMap(map)
@@ -98,6 +115,7 @@ export default function CampaignDetailClient() {
       if (targetIds.length > 0) {
         try {
           const all = await postsApi.listMyMedia({ limit: 100 })
+          if(!current())return
           const map: Record<string, MediaItem> = {}
           for (const pid of targetIds) {
             const found = all.find((m) => m.id === pid)
@@ -110,15 +128,17 @@ export default function CampaignDetailClient() {
       } else {
         setTargetMediaMap({})
       }
+      if(current()){setGate(data);setGateScope(account)}
     } catch {
-      setError('キャンペーンの読み込みに失敗しました')
+      if(current())setError('キャンペーンの読み込みに失敗しました。未取得の情報を0件とは判断しないでください。')
     } finally {
-      setLoading(false)
+      if(current())setLoading(false)
     }
-  }, [id])
+  }, [id,selectedAccountId])
 
   useEffect(() => {
     load()
+    return()=>readEpoch.current?.cancel()
   }, [load])
 
   // Load the LINE connection registry once per visit so the cross-link
@@ -140,32 +160,37 @@ export default function CampaignDetailClient() {
   }, [])
 
   const handleToggleStatus = async () => {
-    if (!gate) return
+    const account=selectedAccountId
+    if (!gate||!account||selectedRef.current!==account||getApiAccountId()!==account||mutationBusy.current) return
     const next = gate.status === 'active' ? 'paused' : 'active'
+    mutationBusy.current=true
     setBusy(true)
     setError('')
     try {
       await engagementGatesApi.update(gate.id, { status: next })
-      await load()
+      if(selectedRef.current===account&&getApiAccountId()===account)await load()
     } catch {
-      setError('ステータスの変更に失敗しました')
+      if(selectedRef.current===account&&getApiAccountId()===account){setGate(null);setGateScope(null);setError('変更結果を確認できませんでした。再操作せず、記録を再確認してください。')}
     } finally {
+      mutationBusy.current=false
       setBusy(false)
     }
   }
 
   const handleDelete = async () => {
-    if (!gate) return
+    const account=selectedAccountId
+    if (!gate||!account||selectedRef.current!==account||getApiAccountId()!==account||mutationBusy.current) return
     if (!confirm('このキャンペーンを削除しますか？この操作は取り消せません。')) return
+    if(selectedRef.current!==account||getApiAccountId()!==account||mutationBusy.current)return
+    mutationBusy.current=true
     setBusy(true)
     setError('')
     try {
       await engagementGatesApi.delete(gate.id)
-      router.push('/campaigns')
+      if(selectedRef.current===account&&getApiAccountId()===account)router.push('/campaigns')
     } catch {
-      setError('削除に失敗しました')
-      setBusy(false)
-    }
+      if(selectedRef.current===account&&getApiAccountId()===account){setGate(null);setGateScope(null);setError('削除結果を確認できませんでした。再操作せず、一覧を再確認してください。')}
+    }finally{mutationBusy.current=false;setBusy(false)}
   }
 
   if (loading) {
@@ -190,6 +215,7 @@ export default function CampaignDetailClient() {
         <Header title="見つかりません" />
         <div className="bg-kumo-base rounded-lg border border-kumo-line p-6 text-sm text-kumo-subtle">
           {error || 'キャンペーンが見つかりません。'}
+          {error&&<button type="button" onClick={()=>void load()} disabled={busy} className="mt-3 block rounded-lg border border-kumo-line px-3 py-2 disabled:opacity-50">状態を再確認</button>}
           <div className="mt-4">
             <Link href="/campaigns" className="text-sm font-medium" style={{ color: ACCENT }}>
               ← キャンペーン一覧に戻る
@@ -200,17 +226,7 @@ export default function CampaignDetailClient() {
     )
   }
 
-  const a = gate.analytics ?? {
-    triggered: 0,
-    cta_sent: 0,
-    pending_follow: 0,
-    delivered: 0,
-    dropped: 0,
-    follow_rate: 0,
-    line_linked: 0,
-    clicks_total: 0,
-    clicks_unique: 0,
-  }
+  const activity=campaignActivity(gate.analytics)
 
   const trigger = TRIGGER_LABELS[gate.trigger_type] ?? { emoji: '⚡', label: gate.trigger_type }
   const statusBadgeClass =
@@ -289,22 +305,9 @@ export default function CampaignDetailClient() {
 
       {/* Funnel stats */}
       <section className="mb-8 bg-kumo-base rounded-xl border border-kumo-line p-5">
-        <h2 className="text-sm font-semibold text-kumo-default mb-4">📊 配信フロー</h2>
-        <Funnel
-          steps={[
-            { label: '反応', sub: 'コメント / DM / メンション', value: a.triggered, emoji: '👋' },
-            { label: 'DM配信', sub: '自動送信成功', value: a.cta_sent, emoji: '📨' },
-            { label: 'ボタン押下', sub: 'フォロー確認待ち', value: a.pending_follow + a.delivered + a.dropped, emoji: '👆' },
-            { label: '特典配信', sub: 'フォロー済で受取', value: a.delivered, emoji: '🎁' },
-            { label: 'URLタップ', sub: `ユニーク ${a.clicks_unique ?? 0} 人`, value: a.clicks_total ?? 0, emoji: '🔗' },
-            { label: 'LINE追加', sub: '連携まで完了', value: a.line_linked, emoji: '🟢' },
-          ]}
-        />
-        {a.dropped > 0 && (
-          <div className="mt-4 text-xs text-kumo-subtle">
-            ※ フォロー確認で諦めた人: <span className="font-medium text-kumo-default">{a.dropped}</span> 名
-          </div>
-        )}
+        <h2 className="text-sm font-semibold text-kumo-default mb-3">📊 活動の記録</h2>
+        <p className="mb-4 text-xs text-kumo-subtle">配信行の現在状態とクリックなどの件数です。単位・観測範囲が異なるため、登録率や採用率には換算しません。実LINE登録、資料の受取、見学・面接の実施は別途確認が必要です。</p>
+        {activity?<ActivityCounts steps={activity}/>:<p role="status" className="text-sm text-amber-800">集計を確認できません。0件や未送信とは判断せず、記録を確認してください。</p>}
       </section>
 
       {/* Configuration (simplified) */}
@@ -494,20 +497,29 @@ export default function CampaignDetailClient() {
  * campaign's comment failures; good enough to spot permission/token issues.
  */
 function RecentReplyFailures() {
+  const {selectedAccountId}=useAccount()
+  const selectedRef=useRef(selectedAccountId);selectedRef.current=selectedAccountId
+  const readEpoch=useRef<ScopedReadEpoch|null>(null)
+  if(!readEpoch.current)readEpoch.current=new ScopedReadEpoch(()=>selectedRef.current===getApiAccountId()?selectedRef.current:null)
+  const [rowsScope,setRowsScope]=useState<string|null>(null)
   const [rows, setRows] = useState<DeliveryFailure[] | null>(null)
   const [error, setError] = useState('')
   useEffect(() => {
-    let active = true
+    const account=selectedAccountId,lease=readEpoch.current!.begin(account)
+    setRows(null);setRowsScope(null);setError('')
+    if(!lease.current())return()=>readEpoch.current?.cancel()
+    const read=async(source:string)=>{const r=await fetchApi<{success:boolean;data?:DeliveryFailure[]}>(`/api/delivery-failures?source=${source}&limit=20`,{signal:lease.signal,cache:'no-store'});if(!r.success||!Array.isArray(r.data))throw Error('Failure history requires verification');return r.data}
     Promise.all([
-      deliveryFailuresApi.list({ source: 'public_reply', limit: 20 }),
-      deliveryFailuresApi.list({ source: 'private_reply', limit: 20 }),
+      read('public_reply'),
+      read('private_reply'),
     ])
       .then(([pub, priv]) => {
-        if (active) setRows([...pub, ...priv].sort((a, b) => Number(b.id) - Number(a.id)).slice(0, 20))
+        if (lease.current()) {setRows([...pub, ...priv].sort((a, b) => Number(b.id) - Number(a.id)).slice(0, 20));setRowsScope(account)}
       })
-      .catch(() => { if (active) setError('失敗ログを取得できませんでした') })
-    return () => { active = false }
-  }, [])
+      .catch(() => { if (lease.current()) setError('失敗ログを取得できませんでした。失敗なしとは判断しないでください。') })
+    return () => readEpoch.current?.cancel()
+  }, [selectedAccountId])
+  const visibleRows=selectedAccountId&&rowsScope===selectedAccountId?rows:null
   return (
     <section className="mt-8 bg-kumo-base rounded-xl border border-kumo-line p-5">
       <div className="flex items-center justify-between mb-2">
@@ -516,11 +528,11 @@ function RecentReplyFailures() {
       </div>
       <p className="text-[11px] text-kumo-subtle mb-3">このアカウント全体の直近の失敗です（キャンペーン別ではありません）。</p>
       {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
-      {rows === null && !error && <p className="text-sm text-kumo-subtle">読み込み中...</p>}
-      {rows && rows.length === 0 && <p className="text-sm text-green-700">✅ 最近の失敗はありません</p>}
-      {rows && rows.length > 0 && (
+      {visibleRows === null && !error && <p className="text-sm text-kumo-subtle">読み込み中...</p>}
+      {visibleRows && visibleRows.length === 0 && <p className="text-sm text-kumo-subtle">取得した範囲に失敗の記録はありません。配信成功や受取の確認とは別です。</p>}
+      {visibleRows && visibleRows.length > 0 && (
         <ul className="divide-y divide-kumo-line">
-          {rows.map((r) => (
+          {visibleRows.map((r) => (
             <li key={r.id} className="py-2 text-sm">
               <div className="flex flex-wrap gap-x-3 text-xs text-kumo-subtle">
                 <span>{formatDateTime(r.createdAt)}</span>
@@ -686,41 +698,15 @@ function parseReplyPatterns(raw: string): string[] {
   return [trimmed]
 }
 
-function Funnel({ steps }: { steps: Array<{ label: string; sub: string; value: number; emoji: string }> }) {
-  const max = Math.max(...steps.map((s) => s.value), 1)
-  const first = steps[0]?.value || 0
+function ActivityCounts({ steps }: { steps: CampaignActivity[] }) {
   return (
-    <div className="space-y-2">
-      {steps.map((s, idx) => {
-        const widthPct = Math.max((s.value / max) * 100, 5)
-        const rate = idx === 0 || first === 0 ? null : ((s.value / first) * 100).toFixed(0)
-        return (
-          <div key={s.label} className="flex items-center gap-3">
-            <div className="w-28 shrink-0">
-              <div className="text-xs font-medium text-kumo-default">
-                <span className="mr-1">{s.emoji}</span>{s.label}
-              </div>
-              <div className="text-[10px] text-kumo-subtle leading-tight">{s.sub}</div>
-            </div>
-            <div className="flex-1 relative h-8 bg-kumo-canvas rounded-lg overflow-hidden">
-              <div
-                className="absolute inset-y-0 left-0 rounded-lg transition-all"
-                style={{
-                  width: `${widthPct}%`,
-                  background: `linear-gradient(90deg, rgba(225,48,108,${0.9 - idx * 0.12}) 0%, rgba(225,48,108,${0.7 - idx * 0.12}) 100%)`,
-                }}
-              />
-              <div className="absolute inset-0 flex items-center justify-between px-3">
-                <span className="text-sm font-semibold text-white drop-shadow">{s.value}</span>
-                {rate !== null && (
-                  <span className="text-[10px] font-medium text-white/90">{rate}%</span>
-                )}
-              </div>
-            </div>
-          </div>
-        )
-      })}
-    </div>
+    <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      {steps.map(s=><div key={s.label} className="rounded-lg border border-kumo-line bg-kumo-canvas p-3">
+        <dt className="text-xs font-medium text-kumo-default"><span className="mr-1">{s.emoji}</span>{s.label}</dt>
+        <dd className="mt-1 text-lg font-semibold text-kumo-default">{s.value} 件</dd>
+        <dd className="mt-1 text-xs text-kumo-subtle">{s.sub}</dd>
+      </div>)}
+    </dl>
   )
 }
 
