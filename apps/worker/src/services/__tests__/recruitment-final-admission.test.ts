@@ -129,7 +129,7 @@ it.each(['valid','wrong-follower','wrong-igsid','dropped','delivered','ended','i
  else {await expect(send).rejects.toThrow();expect(fetch).not.toHaveBeenCalled();}
 });
 
-it.each(['valid','completed','paused-scenario','wrong-account','wrong-follower','claim-lost','advanced','step-deleted','reordered'])(
+it.each(['valid','completed','paused-scenario','wrong-account','wrong-follower','claim-lost','advanced','step-deleted','reordered','condition-follow','condition-unknown','condition-missing'])(
  'checks scheduled step %s after asynchronous message preparation',async change=>{
  const {sqlite,fetch,make}=await fixture();
  sqlite.exec("INSERT INTO scenarios(id,name,trigger_type,account_id) VALUES(1,'test','manual','a'); INSERT INTO scenario_steps(id,scenario_id,step_order,delay_minutes,message_type,body) VALUES(1,1,1,0,'text','{}'); INSERT INTO follower_scenarios(id,follower_id,scenario_id,current_step,status,next_step_at,end_reason) VALUES(1,1,1,0,'active',NULL,'delivery_in_progress')");
@@ -141,6 +141,9 @@ it.each(['valid','completed','paused-scenario','wrong-account','wrong-follower',
   if(change==='claim-lost')sqlite.exec("UPDATE follower_scenarios SET end_reason=NULL");
   if(change==='advanced')sqlite.exec('UPDATE follower_scenarios SET current_step=1');
   if(change==='step-deleted')sqlite.exec('DELETE FROM scenario_steps');
+  if(change==='condition-follow')sqlite.exec("UPDATE scenario_steps SET condition_type='user_following',condition_value=NULL; UPDATE followers SET is_following=0");
+  if(change==='condition-unknown')sqlite.exec("UPDATE scenario_steps SET condition_type='new-condition',condition_value='x'");
+  if(change==='condition-missing')sqlite.exec("UPDATE scenario_steps SET condition_type='tag_exists',condition_value=NULL");
   if(change==='reordered')sqlite.exec("UPDATE scenario_steps SET step_order=2; INSERT INTO scenario_steps(id,scenario_id,step_order,delay_minutes,message_type,body) VALUES(2,1,1,0,'text','{}')");
  };
  const send=make(mutate,'step:1:1').sendText('student','test');

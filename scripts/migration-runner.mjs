@@ -137,6 +137,7 @@ export async function verifyLatestSchema(query) {
     followers: ['account_id','profile_fetched_at','last_inbound_at','messaging_owner'],
     staff_members: ['id','api_key','email','updated_at'],
     follower_scenarios: ['end_reason'],
+    scenario_steps: ['condition_type','condition_value','next_step_on_false'],
     broadcast_runs: ['broadcast_id','started_at'],
     broadcast_recipients: ['broadcast_id','follower_id','status'],
     webhook_events: ['account_id','event_key','subject_id','status'],

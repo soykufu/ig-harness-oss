@@ -182,12 +182,14 @@ export async function processSingleDelivery(
   }
 }
 
-async function evaluateCondition(
+export async function evaluateCondition(
   db: D1Database,
   friendId: string,
   step: { condition_type: string | null; condition_value: string | null },
+  strict = false,
 ): Promise<boolean> {
-  if (!step.condition_type || !step.condition_value) return true;
+  if (!step.condition_type) return !strict || !step.condition_value;
+  if (!step.condition_value && (!strict || !['user_following','user_not_following'].includes(step.condition_type))) return !strict;
 
   switch (step.condition_type) {
     case 'tag_exists': {
@@ -205,7 +207,7 @@ async function evaluateCondition(
       return !tag;
     }
     case 'metadata_equals': {
-      const { key, value } = JSON.parse(step.condition_value) as { key: string; value: unknown };
+      const { key, value } = JSON.parse(step.condition_value!) as { key: string; value: unknown };
       const friendRow = await db
         .prepare('SELECT metadata FROM followers WHERE id = ?')
         .bind(friendId)
@@ -214,7 +216,7 @@ async function evaluateCondition(
       return meta[key] === value;
     }
     case 'metadata_not_equals': {
-      const { key, value } = JSON.parse(step.condition_value) as { key: string; value: unknown };
+      const { key, value } = JSON.parse(step.condition_value!) as { key: string; value: unknown };
       const friendRow = await db
         .prepare('SELECT metadata FROM followers WHERE id = ?')
         .bind(friendId)
@@ -237,7 +239,7 @@ async function evaluateCondition(
       return row?.is_following !== 1;
     }
     default:
-      return true;
+      return !strict;
   }
 }
 
