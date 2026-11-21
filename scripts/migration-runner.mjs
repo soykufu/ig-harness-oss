@@ -145,6 +145,7 @@ export async function verifyLatestSchema(query) {
     broadcast_recipients: ['broadcast_id','follower_id','status'],
     webhook_events: ['account_id','event_key','subject_id','status'],
     rate_limit_buckets: ['bucket_key','hits','expires_at'],
+    recruitment_gate_operations: ['account_id','operation_key','event_key','delivery_id','follower_id','phase','loop_count','definition_version','payload_version','owner_epoch','claimed_at_ms','state'],
     gate_deliveries: ['id','gate_id','follower_id','igsid','status','metadata','end_reason','delivered_at','followup_step_sent','next_followup_at'],
     engagement_gates: ['id','account_id','status','followup_dm_sequence','reward_url','line_connection_id','line_pool_slug','line_tracked_link_short'],
     comment_rule_jobs: ['id','account_id','follower_id','status','public_reply_status','public_reply_id','reply_text','reply_mode','media_id','public_reply_plan_hash','public_reply_owner_epoch','public_reply_claimed_at'],
@@ -168,6 +169,13 @@ export async function verifyLatestSchema(query) {
     if (['forms','form_submissions'].includes(table) && columns.find(column=>column.name==='id').type.toUpperCase()!=='INTEGER') throw new Error(`Schema verification failed: ${table}.id must use SQLite integer identities`);
     if (table === 'staff_members' && columns.find(column => column.name === 'id').type.toUpperCase() !== 'TEXT') throw new Error('Schema verification failed: staff_members.id must support UUIDs');
   }
+  const gateIndexes=await query('PRAGMA index_list(recruitment_gate_operations)');
+  const uniqueGateColumns=[];
+  for(const index of gateIndexes.filter(index=>index.unique===1)){
+    const columns=await query('PRAGMA index_info('+JSON.stringify(index.name)+')');
+    uniqueGateColumns.push(JSON.stringify(columns.map(column=>column.name)));
+  }
+  for(const columns of [['account_id','operation_key'],['account_id','event_key']])if(!uniqueGateColumns.includes(JSON.stringify(columns)))throw new Error('Schema verification failed: gate operation uniqueness missing');
   const formIndexes=await query('PRAGMA index_list(form_submissions)');
   if(!formIndexes.some(index=>index.name==='idx_form_submission_request' && index.unique===1))throw new Error('Schema verification failed: form request uniqueness missing');
   const requestColumns=await query('PRAGMA index_info(idx_form_submission_request)');

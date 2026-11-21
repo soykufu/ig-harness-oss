@@ -203,7 +203,7 @@ export async function processQueuedWebhooks(db: D1Database, client: InstagramCli
   await drainWebhookEvents(db, account.id, async (event) => {
     const value = JSON.parse(event.payload);
     const ref = toIgAccountRef(account, env);
-    if (event.kind === 'messaging' || event.kind === 'standby') await handleMessagingEvent(db, client, value, workerUrl, ref, account.id, event.kind === 'standby', recruitmentJobClientFactory(env, db, account));
+    if (event.kind === 'messaging' || event.kind === 'standby') await handleMessagingEvent(db, client, value, workerUrl, ref, account.id, event.kind === 'standby', recruitmentJobClientFactory(env, db, account),event.event_key);
     else if (event.kind === 'comments') await handleCommentEvent(db, client, value, account.ig_user_id, workerUrl, ref, account.id);
     else if (event.kind === 'mentions') await handleMentionEvent(db, client, value, ref, account.id);
     // B-15: live comments look like ordinary comment payloads — reuse that
@@ -277,7 +277,8 @@ export async function handleMessagingEvent(
   igAccount?: IgAccountRef,
   accountId?: string,
   observeOnly = false,
-  clientForOperation?: (key: string, stepVersion?: string) => Promise<InstagramClient>,
+  clientForOperation?:NonNullable<ReturnType<typeof recruitmentJobClientFactory>>,
+  verifiedEventKey?:string,
 ): Promise<void> {
   const senderId = event.sender.id;
 
@@ -518,7 +519,7 @@ export async function handleMessagingEvent(
           deliveryId: payload.deliveryId,
           igsid: senderId,
           workerBaseUrl: workerUrl,
-          igAccount,
+          igAccount,accountId,eventKey:verifiedEventKey,clientFactory:clientForOperation,
         });
         // Log button press as inbound gate message
         const postbackTitle = event.postback.title ?? event.postback.payload ?? '';

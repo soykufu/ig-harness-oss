@@ -19,7 +19,7 @@ test('fresh install, second run, staff hashing and account ownership preservatio
   await applyMigrations(adapter(db));
   assert.match(db.prepare('SELECT api_key FROM staff_members').get().api_key, /^sha256:[a-f0-9]{64}$/);
   assert.equal(db.prepare('SELECT account_id FROM comment_rules').get().account_id, 'account-a');
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ig_schema_migrations').get().n, 37);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ig_schema_migrations').get().n, 38);
   db.close();
 });
 test('a failed file has no success marker and can resume without losing earlier migrations', async () => {
@@ -64,7 +64,7 @@ test('adopts legacy repeat-delivery history without recreating the removed uniqu
   await applyMigrations(adapter(db));
   assert.equal(db.prepare('SELECT COUNT(*) n FROM gate_deliveries').get().n, 2);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE name='uq_gate_deliveries_gate_follower'").get().n, 0);
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM ig_schema_migrations').get().n, 37);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM ig_schema_migrations').get().n, 38);
   db.close();
 });
 
@@ -125,4 +125,16 @@ test('public phase migration leaves legacy acknowledgement and outcome unchanged
 
 for(const [table,column] of [['gate_deliveries','metadata'],['gate_deliveries','end_reason'],['gate_deliveries','followup_step_sent'],['engagement_gates','followup_dm_sequence']])test(`rejects missing gate purpose field ${table}.${column} despite a complete ledger`,async()=>{
  const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);await assert.rejects(applyMigrations(adapter(db)),new RegExp('Schema verification failed: '+table+'.'+column));}finally{db.close();}
+});
+
+for(const column of ['event_key','definition_version','payload_version','claimed_at_ms'])test(`rejects missing gate receipt column ${column} despite a complete ledger`,async()=>{
+ const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));
+ // Rebuild a deliberately damaged receipt table; the migration ledger is unchanged.
+ db.exec('ALTER TABLE recruitment_gate_operations RENAME TO damaged_gate_operations');
+ const cols=db.prepare('PRAGMA table_info(damaged_gate_operations)').all().filter(c=>c.name!==column).map(c=>c.name+' '+c.type);
+ db.exec('CREATE TABLE recruitment_gate_operations('+cols.join(',')+')');
+ await assert.rejects(applyMigrations(adapter(db)),new RegExp('Schema verification failed: recruitment_gate_operations.'+column));}finally{db.close();}
+});
+test('gate receipt uniqueness is verified independently of the migration completion ledger',async()=>{
+ const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));db.exec('ALTER TABLE recruitment_gate_operations RENAME TO damaged_gate_operations');const cols=db.prepare('PRAGMA table_info(damaged_gate_operations)').all().map(c=>c.name+' '+c.type);db.exec('CREATE TABLE recruitment_gate_operations('+cols.join(',')+')');await assert.rejects(applyMigrations(adapter(db)),/gate operation uniqueness missing/);}finally{db.close();}
 });

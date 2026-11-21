@@ -6,7 +6,6 @@ import {
   listEngagementGates,
   getEngagementGate,
   updateEngagementGate,
-  deleteEngagementGate,
   listGateDeliveries,
   getGateAnalytics,
   getRichMessage,
@@ -386,7 +385,14 @@ engagementGates.patch('/api/engagement-gates/:id', async (c) => {
 
 engagementGates.delete('/api/engagement-gates/:id', async (c) => {
   const id = c.req.param('id');
-  await deleteEngagementGate(c.env.DB, id);
+  const account=await resolveAccount(c);
+  if(!account||!await c.env.DB.prepare('SELECT 1 FROM engagement_gates WHERE id=? AND account_id=?').bind(id,account.id).first())return c.json({error:'Gate not found in account'},404);
+  const deleted=await c.env.DB.prepare(`DELETE FROM engagement_gates WHERE id=? AND account_id=?
+    AND NOT EXISTS(SELECT 1 FROM gate_deliveries d WHERE d.gate_id=engagement_gates.id AND d.end_reason IN ('delivery_in_progress','outcome_unknown'))
+    AND NOT EXISTS(SELECT 1 FROM recruitment_gate_operations o JOIN gate_deliveries d ON d.id=o.delivery_id WHERE d.gate_id=engagement_gates.id AND o.state IN ('claimed','uncertain'))
+    AND NOT EXISTS(SELECT 1 FROM comment_rule_jobs j JOIN gate_deliveries d ON d.id=j.gate_delivery_id WHERE d.gate_id=engagement_gates.id AND (j.status IN ('processing','uncertain') OR j.public_reply_status IN ('processing','uncertain')))
+    RETURNING id`).bind(id,account.id).first();
+  if(!deleted)return c.json({error:'Gate delivery requires reconciliation before deletion'},409);
   return c.json({ success: true });
 });
 

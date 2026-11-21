@@ -1,5 +1,7 @@
+import {handleRecruitmentGatePostback,type GatePostbackProof} from './recruitment-gate-postback.js';
 import {gateFollowupKey,gateFollowupVersion,gateFollowupPayloadVersion,type GateFollowupProof} from './recruitment-gate-followup.js';
-import { issueTrackingToken, type TrackingEnv } from '../lib/tracking-token.js';
+import {wrapClickTracking} from './gate-click-tracking.js';
+export {wrapClickTracking} from './gate-click-tracking.js';
 import { InstagramApiError,richActionMessage,type RichAction } from '@ig-harness/ig-sdk';
 import { messagingEligibility } from './messaging-window.js';
 import { enqueueCommentRuleJob } from './comment-rule-jobs.js';
@@ -27,33 +29,6 @@ async function effectiveRewardUrl(
   return crossLink ?? gate.reward_url;
 }
 
-/**
- * Build a click-tracking URL that records the tap in gate_clicks before
- * 302'ing to the real destination. `workerBaseUrl` is the public origin
- * of this worker (e.g. `https://ig-harness.noda-c40.workers.dev`); we get
- * it from env.WORKER_URL so the link works off the correct deployment.
- */
-export async function wrapClickTracking(
-  workerBaseUrl: string,
-  gateId: string,
-  destinationUrl: string,
-  igsid?: string,
-  env: TrackingEnv = {},
-): Promise<string> {
-  if (!destinationUrl || !/^https?:\/\//.test(destinationUrl)) return destinationUrl;
-  // base64url encode the destination so it survives in a query param
-  const b64 = btoa(encodeURIComponent(destinationUrl).replace(/%([0-9A-F]{2})/g, (_, h) =>
-    String.fromCharCode(parseInt(h, 16)),
-  ))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-  const base = workerBaseUrl.replace(/\/$/, '');
-  const token = igsid ? await issueTrackingToken(env, { purpose: 'gate', linkId: gateId, igsid, destination: destinationUrl }) : null;
-  const igPart = token ? `&t=${encodeURIComponent(token)}` : '';
-  return `${base}/click/${gateId}?u=${b64}${igPart}`;
-}
-
 interface IgClientLike {
   sendPrivateReply(commentId: string, text: string): Promise<{ message_id?: string }>;
   getCommentTimestamp(commentId: string): Promise<string>;
@@ -71,7 +46,7 @@ interface IgClientLike {
   postCommentToMedia(mediaId: string, message: string): Promise<unknown>;
 }
 
-type GateClientFactory=(key:string,definitionVersion?:string,subjectVersion?:string,proof?:GateFollowupProof)=>Promise<IgClientLike>;
+type GateClientFactory=(key:string,definitionVersion?:string,subjectVersion?:string,proof?:GateFollowupProof,postback?:GatePostbackProof)=>Promise<IgClientLike>;
 
 interface FollowerRef {
   id: number;
@@ -332,8 +307,9 @@ export async function resumeCommentGate(db: D1Database, client: IgClientLike, fo
 export async function handleFollowCheckPostback(
   db: D1Database,
   igClient: IgClientLike,
-  args: { gateId: string; deliveryId: string; igsid: string; workerBaseUrl?: string; igAccount?: IgAccountRef },
+  args: { gateId: string; deliveryId: string; igsid: string; workerBaseUrl?: string; igAccount?: IgAccountRef; accountId?:string; eventKey?:string; clientFactory?:GateClientFactory },
 ): Promise<void> {
+  if(args.clientFactory)return handleRecruitmentGatePostback(db,igClient,args,args.clientFactory);
   const [gate, delivery] = await Promise.all([
     getEngagementGate(db, args.gateId),
     getGateDelivery(db, args.deliveryId),

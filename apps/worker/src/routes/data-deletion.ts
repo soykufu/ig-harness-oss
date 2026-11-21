@@ -88,7 +88,8 @@ dataDeletion.post('/api/data-deletion/:code/resolve', requireRole('owner'), asyn
     UNION ALL SELECT 1 FROM recruitment_manual_intents WHERE account_id=? AND status IN ('claimed','uncertain')
     UNION ALL SELECT 1 FROM recruitment_human_reply_contracts WHERE account_id=? AND status IN ('claimed','uncertain')
     UNION ALL SELECT 1 FROM gate_deliveries d JOIN engagement_gates g ON g.id=d.gate_id WHERE g.account_id=? AND d.end_reason IN ('delivery_in_progress','outcome_unknown')
-    UNION ALL SELECT 1 FROM active_mutations LIMIT 1`).bind(account.id, account.id, account.id, account.id, account.id, account.id, account.id).first();
+    UNION ALL SELECT 1 FROM recruitment_gate_operations WHERE account_id=? AND state IN ('claimed','uncertain')
+    UNION ALL SELECT 1 FROM active_mutations LIMIT 1`).bind(account.id, account.id, account.id, account.id, account.id, account.id, account.id, account.id).first();
   if (busy) return c.json({ error: 'Account has in-flight delivery work; retry after it settles' }, 409);
   for (const table of ['messages_log', 'link_clicks', 'form_submissions', 'follower_scenarios', 'follower_tags', 'gate_deliveries', 'broadcast_recipients', 'comment_rule_jobs', 'delivery_failures']) {
     statements.push(db.prepare(`DELETE FROM ${table} WHERE follower_id IN (SELECT id FROM followers WHERE ${condition})`).bind(...values));
