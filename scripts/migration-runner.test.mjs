@@ -19,7 +19,7 @@ test('fresh install, second run, staff hashing and account ownership preservatio
   await applyMigrations(adapter(db));
   assert.match(db.prepare('SELECT api_key FROM staff_members').get().api_key, /^sha256:[a-f0-9]{64}$/);
   assert.equal(db.prepare('SELECT account_id FROM comment_rules').get().account_id, 'account-a');
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ig_schema_migrations').get().n, 35);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ig_schema_migrations').get().n, 36);
   db.close();
 });
 test('a failed file has no success marker and can resume without losing earlier migrations', async () => {
@@ -64,7 +64,7 @@ test('adopts legacy repeat-delivery history without recreating the removed uniqu
   await applyMigrations(adapter(db));
   assert.equal(db.prepare('SELECT COUNT(*) n FROM gate_deliveries').get().n, 2);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE name='uq_gate_deliveries_gate_follower'").get().n, 0);
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM ig_schema_migrations').get().n, 35);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM ig_schema_migrations').get().n, 36);
   db.close();
 });
 
@@ -91,11 +91,22 @@ test('form editor migration preserves existing IDs, answers and timestamps and d
  try{
   await assert.rejects(applyMigrations(adapter(db,sql=>/^ALTER TABLE forms ADD COLUMN description\b/.test(sql))),/Migration failed: 0035_form_editor_fields/);
   db.exec("INSERT INTO ig_accounts(id,ig_user_id,access_token,created_at,updated_at) VALUES('a','111','test','2026-01-01','2026-01-01'); INSERT INTO followers(id,igsid,account_id) VALUES(7,'student','a'); INSERT INTO forms(id,name,fields,account_id,created_at) VALUES(17,'legacy','[]','a','2026-01-01'); INSERT INTO form_submissions(id,form_id,follower_id,answers,submitted_at) VALUES(23,17,7,'{\"hope\":\"visit\"}','2026-01-02')");
-  const answers=db.prepare('SELECT * FROM form_submissions').all(),form=db.prepare('SELECT id,name,fields,account_id,created_at FROM forms').get();
-  await applyMigrations(adapter(db));assert.deepEqual(db.prepare('SELECT * FROM form_submissions').all(),answers);assert.deepEqual(db.prepare('SELECT id,name,fields,account_id,created_at FROM forms').get(),form);assert.equal(db.prepare('SELECT submit_count FROM forms').get().submit_count,1);
-  await applyMigrations(adapter(db));assert.deepEqual(db.prepare('SELECT * FROM form_submissions').all(),answers);
+  const answers=db.prepare('SELECT id,form_id,follower_id,answers,submitted_at FROM form_submissions').all(),form=db.prepare('SELECT id,name,fields,account_id,created_at FROM forms').get();
+  await applyMigrations(adapter(db));assert.deepEqual(db.prepare('SELECT id,form_id,follower_id,answers,submitted_at FROM form_submissions').all(),answers);assert.deepEqual(db.prepare('SELECT id,name,fields,account_id,created_at FROM forms').get(),form);assert.equal(db.prepare('SELECT submit_count FROM forms').get().submit_count,1);
+  await applyMigrations(adapter(db));assert.deepEqual(db.prepare('SELECT id,form_id,follower_id,answers,submitted_at FROM form_submissions').all(),answers);
  }finally{db.close();}
 });
 for(const column of ['description','save_to_metadata','updated_at'])test(`rejects missing form editor column ${column} despite a complete ledger`,async()=>{
  const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));db.exec(`ALTER TABLE forms DROP COLUMN ${column}`);await assert.rejects(applyMigrations(adapter(db)),new RegExp('Schema verification failed: forms.'+column));}finally{db.close();}
+});
+for(const column of ['request_hash','side_effect_state'])test(`rejects missing form receipt column ${column} despite a complete ledger`,async()=>{
+ const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));db.exec(`ALTER TABLE form_submissions DROP COLUMN ${column}`);await assert.rejects(applyMigrations(adapter(db)),new RegExp('Schema verification failed: form_submissions.'+column));}finally{db.close();}
+});
+for(const mode of ['missing','not-unique','wrong-columns'])test(`rejects ${mode} form receipt uniqueness despite a complete ledger`,async()=>{
+ const db=new DatabaseSync(':memory:');try{
+  await applyMigrations(adapter(db));db.exec('DROP INDEX idx_form_submission_request');
+  if(mode==='not-unique')db.exec('CREATE INDEX idx_form_submission_request ON form_submissions(form_id,request_key)');
+  if(mode==='wrong-columns')db.exec('CREATE UNIQUE INDEX idx_form_submission_request ON form_submissions(form_id,request_hash)');
+  await assert.rejects(applyMigrations(adapter(db)),/Schema verification failed: form request uniqueness/);
+ }finally{db.close();}
 });

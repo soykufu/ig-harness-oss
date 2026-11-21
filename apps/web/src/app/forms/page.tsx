@@ -39,6 +39,7 @@ function Submissions({ form }: { form: FormApi }) {
           <div className="text-[11px] text-kumo-subtle mb-1">
             {formatDateTime(s.createdAt)}{s.friendName ? ` ／ ${s.friendName}` : ''}
           </div>
+          {s.sideEffectsStatus === 'held' && <p className="mb-2 text-xs text-amber-800" role="status">本人確認待ちの受付です。プロフィール更新・タグ・自動案内は実行していません。</p>}
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
             {Object.entries(s.data).map(([k, v]) => (
               <div key={k} className="contents">

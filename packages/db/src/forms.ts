@@ -26,6 +26,8 @@ export interface FormSubmission {
   friend_id: string | null;
   data: string; // JSON string
   created_at: string;
+  side_effect_state?:'legacy'|'held';
+  replayed?:boolean;
 }
 
 // ── CRUD ─────────────────────────────────────────────────────────────────────
@@ -172,7 +174,7 @@ export async function getFormSubmissions(
 ): Promise<FormSubmission[]> {
   const result = await db
     .prepare(
-      `SELECT fs.id,fs.form_id,fs.follower_id AS friend_id,fs.answers AS data,fs.submitted_at AS created_at, f.name as friend_name FROM form_submissions fs
+      `SELECT fs.id,fs.form_id,fs.follower_id AS friend_id,fs.answers AS data,fs.submitted_at AS created_at,fs.side_effect_state, f.name as friend_name FROM form_submissions fs
        LEFT JOIN followers f ON f.id = fs.follower_id
        WHERE fs.form_id = ? ORDER BY fs.submitted_at DESC,fs.id DESC`,
     )
@@ -185,6 +187,8 @@ export interface CreateFormSubmissionInput {
   formId: string;
   friendId?: string | null;
   data: string; // JSON string
+  requestKey?:string;
+  requestHash?:string;
 }
 
 export async function createFormSubmission(
@@ -192,14 +196,27 @@ export async function createFormSubmission(
   input: CreateFormSubmissionInput,
 ): Promise<FormSubmission> {
   if(!input.friendId)throw Error('An identified respondent is required');
+  if((input.requestKey||input.requestHash)&&(!/^[a-f0-9]{64}$/.test(input.requestKey??'')||!/^[a-f0-9]{64}$/.test(input.requestHash??'')))throw Error('Invalid submission identity');
   const now = jstNow();
   const results=await db.batch([
-    db.prepare(`INSERT INTO form_submissions(form_id,follower_id,answers,submitted_at)
-      SELECT form.id,f.id,?,? FROM forms form JOIN followers f ON f.account_id=form.account_id
-      WHERE form.id=? AND f.id=? AND form.is_active=1 RETURNING id`).bind(input.data,now,input.formId,input.friendId),
+    db.prepare(`INSERT INTO form_submissions(form_id,follower_id,answers,submitted_at,request_key,request_hash,side_effect_state)
+      SELECT form.id,f.id,?,?,?,?,? FROM forms form JOIN followers f ON f.account_id=form.account_id
+      WHERE form.id=? AND f.id=? AND form.is_active=1
+      ON CONFLICT(form_id,request_key) DO NOTHING RETURNING id`).bind(input.data,now,input.requestKey??null,input.requestHash??null,input.requestKey?'held':'legacy',input.formId,input.friendId),
     db.prepare(`UPDATE forms SET submit_count=(SELECT COUNT(*) FROM form_submissions WHERE form_id=?),updated_at=? WHERE id=? AND changes()=1`).bind(input.formId,now,input.formId),
   ]);
   const id=(results[0].results[0] as {id:number}|undefined)?.id;
-  if(!id)throw Error('Submission insert failed');
-  return (await db.prepare(`SELECT id,form_id,follower_id AS friend_id,answers AS data,submitted_at AS created_at FROM form_submissions WHERE id=?`).bind(id).first<FormSubmission>())!;
+  if(!id){
+    if(input.requestKey){
+      const existing=await db.prepare(`SELECT s.id,s.form_id,s.follower_id AS friend_id,s.answers AS data,s.submitted_at AS created_at,s.side_effect_state FROM form_submissions s
+        JOIN forms f ON f.id=s.form_id JOIN followers p ON p.id=s.follower_id AND p.account_id=f.account_id
+        WHERE s.form_id=? AND s.request_key=? AND s.request_hash=? AND s.follower_id=? AND s.side_effect_state='held' AND f.is_active=1`)
+        .bind(input.formId,input.requestKey,input.requestHash,input.friendId).first<FormSubmission>();
+      if(existing)return{...existing,replayed:true};
+    }
+    throw Error('Submission request requires reconciliation');
+  }
+  const saved=await db.prepare(`SELECT id,form_id,follower_id AS friend_id,answers AS data,submitted_at AS created_at,side_effect_state FROM form_submissions WHERE id=?`).bind(id).first<FormSubmission>();
+  if(!saved)throw Error('Submission result requires reconciliation');
+  return{...saved,replayed:false};
 }

@@ -638,6 +638,8 @@ export interface FormSubmissionApi {
   friendName: string | null
   data: Record<string, unknown>
   createdAt: string
+  sideEffectsStatus?: 'legacy' | 'held'
+  replayed?: boolean
 }
 
 export const formsApi = {

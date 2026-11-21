@@ -1,5 +1,6 @@
 import { messagingEligibility } from '../services/messaging-window.js';
 import { assertPublicMetadataPatch } from '../services/recruitment-metadata.js';
+import { sha256 } from '../lib/security.js';
 import { isOutboundPaused } from '../services/human-touch.js';
 import { Hono } from 'hono';
 import {
@@ -46,6 +47,8 @@ function serializeSubmission(row: DbFormSubmission & { friend_name?: string | nu
     friendName: row.friend_name || null,
     data: JSON.parse(row.data || '{}') as Record<string, unknown>,
     createdAt: row.created_at,
+    sideEffectsStatus:row.side_effect_state??'legacy',
+    replayed:row.replayed??false,
   };
 }
 
@@ -248,11 +251,24 @@ forms.post('/api/forms/:id/submit', async (c) => {
     if(!friendId)return c.json({success:false,error:'回答者を確認できません。このフォームは既存の求職者に関連づけて回答してください。'},400);
 
     // Persist using the existing identified-respondent schema.
-    const submission = await createFormSubmission(c.env.DB, {
+    const enforced=c.env.RECRUITMENT_LEDGER_ENFORCEMENT==='1';
+    let requestKey:string|undefined,requestHash:string|undefined;
+    if(enforced){
+      const nonce=c.req.header('Idempotency-Key')??'';
+      if(!/^[A-Za-z0-9_-]{16,100}$/.test(nonce))return c.json({success:false,error:'安定した受付IDが必要です。新しいIDで再送せず確認してください。'},400);
+      requestKey=await sha256(JSON.stringify([form.account_id,String(form.id),nonce]));
+      requestHash=await sha256(JSON.stringify([String(friendId),submissionData]));
+    }
+    let submission:DbFormSubmission;
+    try{submission=await createFormSubmission(c.env.DB, {
       formId,
       friendId: friendId || null,
       data: JSON.stringify(submissionData),
-    });
+      requestKey,requestHash,
+    });}catch(error){if(enforced)return c.json({success:false,error:'受付結果の照合が必要です。新しいIDで再送しないでください。'},409);throw error;}
+    // A public friendId/IGSID is not authentication. Enforced receipts stay
+    // held until signed respondent identity and purpose guards are connected.
+    if(enforced)return c.json({success:true,data:{...serializeSubmission(submission),sideEffectsStatus:'held',requiresIdentityVerification:true}},submission.replayed?200:201);
 
     // Side effects (best-effort, don't fail the request)
     if (friendId) {

@@ -138,8 +138,8 @@ export async function verifyLatestSchema(query) {
     staff_members: ['id','api_key','email','updated_at'],
     follower_scenarios: ['end_reason'],
     scenarios: ['description','trigger_tag_id'],
-    forms: ['description','on_submit_tag_id','on_submit_scenario_id','on_submit_message_type','on_submit_message_content','save_to_metadata','submit_count','updated_at'],
-    form_submissions: ['form_id','follower_id','answers','submitted_at'],
+    forms: ['id','description','on_submit_tag_id','on_submit_scenario_id','on_submit_message_type','on_submit_message_content','save_to_metadata','submit_count','updated_at'],
+    form_submissions: ['id','form_id','follower_id','answers','submitted_at','request_key','request_hash','side_effect_state'],
     scenario_steps: ['condition_type','condition_value','next_step_on_false'],
     broadcast_runs: ['broadcast_id','started_at'],
     broadcast_recipients: ['broadcast_id','follower_id','status'],
@@ -163,6 +163,11 @@ export async function verifyLatestSchema(query) {
   for (const [table, names] of Object.entries(required)) {
     const columns = await query(`PRAGMA table_info(${table})`);
     for (const name of names) if (!columns.some(column => column.name === name)) throw new Error(`Schema verification failed: ${table}.${name} missing`);
+    if (['forms','form_submissions'].includes(table) && columns.find(column=>column.name==='id').type.toUpperCase()!=='INTEGER') throw new Error(`Schema verification failed: ${table}.id must use SQLite integer identities`);
     if (table === 'staff_members' && columns.find(column => column.name === 'id').type.toUpperCase() !== 'TEXT') throw new Error('Schema verification failed: staff_members.id must support UUIDs');
   }
+  const formIndexes=await query('PRAGMA index_list(form_submissions)');
+  if(!formIndexes.some(index=>index.name==='idx_form_submission_request' && index.unique===1))throw new Error('Schema verification failed: form request uniqueness missing');
+  const requestColumns=await query('PRAGMA index_info(idx_form_submission_request)');
+  if(JSON.stringify(requestColumns.map(column=>column.name))!==JSON.stringify(['form_id','request_key']))throw new Error('Schema verification failed: form request uniqueness columns changed');
 }
