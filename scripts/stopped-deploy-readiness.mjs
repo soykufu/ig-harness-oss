@@ -9,8 +9,9 @@ export async function assertStoppedDeploySchema({repoDir,query}){
   if(!/^\s*(SELECT|PRAGMA)\b/i.test(sql))throw Error('Deployment readiness accepts reads only');
   return query(sql);
  };
- const state=(await read("SELECT (SELECT value FROM integration_settings WHERE key='outbound_paused') AS paused,(SELECT COUNT(*) FROM ig_accounts) AS accounts"))[0];
- if(state?.paused!=='1'||state.accounts!==0)throw Error('Deployment requires a stopped, unconnected installation');
+ const stateSql="SELECT (SELECT value FROM integration_settings WHERE key='outbound_paused') AS paused,(SELECT COUNT(*) FROM ig_accounts) AS accounts,(SELECT COUNT(*) FROM followers) AS followers";
+ const state=(await read(stateSql))[0];
+ if(state?.paused!=='1'||state.accounts!==0||state.followers!==0)throw Error('Deployment requires a stopped, unconnected installation');
  const files=(await readdir(join(repoDir,'packages/db/migrations'))).filter(f=>/^\d+.*\.sql$/.test(f)).sort();
  const rows=await read('SELECT name,sha256 FROM ig_schema_migrations');
  const applied=new Map(rows.map(row=>[row.name,row.sha256]));
@@ -22,7 +23,7 @@ export async function assertStoppedDeploySchema({repoDir,query}){
  await verifyLatestSchema(read);
  const finalRows=await read('SELECT name,sha256 FROM ig_schema_migrations');
  if(JSON.stringify(finalRows.map(row=>[row.name,row.sha256]).sort())!==JSON.stringify(rows.map(row=>[row.name,row.sha256]).sort()))throw Error('Deployment migration evidence changed during review');
- const finalState=(await read("SELECT (SELECT value FROM integration_settings WHERE key='outbound_paused') AS paused,(SELECT COUNT(*) FROM ig_accounts) AS accounts"))[0];
- if(finalState?.paused!=='1'||finalState.accounts!==0)throw Error('Deployment stop or connection state changed during review');
+ const finalState=(await read(stateSql))[0];
+ if(finalState?.paused!=='1'||finalState.accounts!==0||finalState.followers!==0)throw Error('Deployment stop or connection state changed during review');
  return{migrationCount:files.length,stopped:true,connectedAccounts:0,backupVerified:false,deploymentAuthorized:false};
 }
