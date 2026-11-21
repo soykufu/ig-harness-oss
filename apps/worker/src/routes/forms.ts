@@ -21,6 +21,21 @@ import type { Env } from '../index.js';
 
 const forms = new Hono<Env>();
 
+function validFormManagementInput(body:{name?:unknown;isActive?:unknown;saveToMetadata?:unknown;fields?:unknown}){
+ if(body.name!==undefined&&(typeof body.name!=='string'||!body.name.trim()))return false;
+ if(body.isActive!==undefined&&typeof body.isActive!=='boolean')return false;
+ if(body.saveToMetadata!==undefined&&typeof body.saveToMetadata!=='boolean')return false;
+ if(body.fields!==undefined&&(!Array.isArray(body.fields)||body.fields.some(f=>!f||typeof f!=='object'||typeof f.name!=='string'||!f.name.trim()||typeof f.label!=='string'||!['text','textarea','email','tel','select'].includes(f.type)||(f.required!==undefined&&typeof f.required!=='boolean'))))return false;
+ return true;
+}
+
+async function ownedFormReferences(db:D1Database,accountId:string,body:{onSubmitTagId?:string|null;onSubmitScenarioId?:string|null}){
+ for(const [value,table]of [[body.onSubmitTagId,'tags'],[body.onSubmitScenarioId,'scenarios']] as const){
+  if(value!==undefined&&value!==null&&(typeof value!=='string'||!value.trim()||!await db.prepare(`SELECT 1 FROM ${table} WHERE id=? AND account_id=?`).bind(value,accountId).first()))return false;
+ }
+ return true;
+}
+
 function serializeForm(row: DbForm) {
   return {
     id: String(row.id),
@@ -96,10 +111,11 @@ forms.post('/api/forms', async (c) => {
       saveToMetadata?: boolean;
     }>();
 
-    if (!body.name) {
+    if (!validFormManagementInput(body)||!body.name) {
       return c.json({ success: false, error: 'name is required' }, 400);
     }
 
+    if(!await ownedFormReferences(c.env.DB,account.id,body))return c.json({success:false,error:'フォームのタグ・シナリオを同じアカウントで選び直してください。'},400);
     const form = await createForm(c.env.DB, {
       name: body.name,
       description: body.description ?? null,
@@ -123,6 +139,9 @@ forms.post('/api/forms', async (c) => {
 forms.put('/api/forms/:id', async (c) => {
   try {
     const id = c.req.param('id');
+    const account=await resolveAccount(c);
+    const current=await getFormById(c.env.DB,id);
+    if(!account||!current||current.account_id!==account.id)return c.json({success:false,error:'Form not found in account'},404);
     const body = await c.req.json<{
       name?: string;
       description?: string | null;
@@ -135,6 +154,8 @@ forms.put('/api/forms/:id', async (c) => {
       isActive?: boolean;
     }>();
 
+    if(!validFormManagementInput(body))return c.json({success:false,error:'フォームの入力形式を確認してください。'},400);
+    if(!await ownedFormReferences(c.env.DB,account.id,body))return c.json({success:false,error:'フォームのタグ・シナリオを同じアカウントで選び直してください。'},400);
     const updated = await updateForm(c.env.DB, id, {
       name: body.name,
       description: body.description,
@@ -145,7 +166,7 @@ forms.put('/api/forms/:id', async (c) => {
       onSubmitMessageContent: body.onSubmitMessageContent,
       saveToMetadata: body.saveToMetadata,
       isActive: body.isActive,
-    });
+    },{accountId:account.id});
 
     if (!updated) {
       return c.json({ success: false, error: 'Form not found' }, 404);
@@ -162,11 +183,12 @@ forms.put('/api/forms/:id', async (c) => {
 forms.delete('/api/forms/:id', async (c) => {
   try {
     const id = c.req.param('id');
+    const account=await resolveAccount(c);
     const form = await getFormById(c.env.DB, id);
-    if (!form) {
+    if (!form||!account||form.account_id!==account.id) {
       return c.json({ success: false, error: 'Form not found' }, 404);
     }
-    await deleteForm(c.env.DB, id);
+    if(!await deleteForm(c.env.DB,id,{accountId:account.id}))return c.json({success:false,error:'Form changed; reconcile before deleting'},409);
     return c.json({ success: true, data: null });
   } catch (err) {
     console.error('DELETE /api/forms/:id error:', err);
@@ -178,11 +200,12 @@ forms.delete('/api/forms/:id', async (c) => {
 forms.get('/api/forms/:id/submissions', async (c) => {
   try {
     const id = c.req.param('id');
+    const account=await resolveAccount(c);
     const form = await getFormById(c.env.DB, id);
-    if (!form) {
+    if (!form||!account||form.account_id!==account.id) {
       return c.json({ success: false, error: 'Form not found' }, 404);
     }
-    const submissions = await getFormSubmissions(c.env.DB, id);
+    const submissions = await getFormSubmissions(c.env.DB,id,{accountId:account.id});
     return c.json({ success: true, data: submissions.map(serializeSubmission) });
   } catch (err) {
     console.error('GET /api/forms/:id/submissions error:', err);

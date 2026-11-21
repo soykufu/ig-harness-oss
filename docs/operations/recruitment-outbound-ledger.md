@@ -1,5 +1,11 @@
 # 採用DM共通台帳の組込み条件
 
+## Form管理の保存・account照合（2026-11-21・本番未適用）
+
+フォーム名だけの更新で、未指定のis_active/metadata保存/自動メッセージ/tag/scenarioを初期化しない。DB更新を指定された列だけの一文へ変更し、独立列の同時編集を上書きしない。明示null/falseは維持する。管理側update/delete/回答閲覧は選択accountと保存時の所有範囲を再照合し、別accountのtag/scenarioは作成/更新時のSQLでも拒否する。古い参照が別accountへ移ったフォームを再開せず、停止操作は可能とする。回答閲覧でも外部accountへ誤って関連した旧行を返さない。
+
+文字列のfalseや不正なfieldsを設定値に変換しない。public GET/submitの公開範囲と既存役割は変更せず、強制モードの回答は引き続きheldでプロフィール/tag/scenario/DMを実行しない。public friendId/IGSIDを本人認証と扱わず、認証元と回答者向け公開ページの接続は未了。本番のフォーム/LINE/資料受取条件は変更していない。
+
 ## 後続stepの不変receipt（2026-11-21・本番未適用）
 
 0041は今後の強制モードだけに各account/delivery/stepの一意receiptを保存する。owner・定義・payload・予定数・claim時刻・claimed/sent/uncertainをmetadataと別に残す。旧配信を推定でbackfillしない。claim前の業務状態確認、claim/receiptの原子的保存、全slotのAPI受付/観測確認、receiptと次stepの原子的完了を組み合わせる。部分送信・保存失敗・定義/所有者/停止/相談/関係gate変更はuncertainを保持し、新しいIDで送らない。receiptが不明なら他経路の枠確保も拒否し、gate/本人データの削除で証跡を消さない。

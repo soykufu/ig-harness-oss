@@ -79,7 +79,8 @@ export async function createForm(db: D1Database, input: CreateFormInput): Promis
          (name, description, fields, on_submit_tag_id, on_submit_scenario_id,
           on_submit_message_type, on_submit_message_content,
           save_to_metadata, is_active, submit_count, account_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?) RETURNING id`,
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?
+       WHERE (? IS NULL OR ((? IS NULL OR EXISTS(SELECT 1 FROM tags WHERE id=? AND account_id=?)) AND (? IS NULL OR EXISTS(SELECT 1 FROM scenarios WHERE id=? AND account_id=?)))) RETURNING id`,
     )
     .bind(
       input.name,
@@ -92,7 +93,7 @@ export async function createForm(db: D1Database, input: CreateFormInput): Promis
       input.saveToMetadata !== false ? 1 : 0,
       input.accountId ?? null,
       now,
-      now,
+      now,input.accountId??null,input.onSubmitTagId??null,input.onSubmitTagId??null,input.accountId??null,input.onSubmitScenarioId??null,input.onSubmitScenarioId??null,input.accountId??null,
     )
     .first<{id:number}>();
   if(!inserted)throw Error('Form insert failed');
@@ -111,59 +112,30 @@ export interface UpdateFormInput {
   isActive?: boolean;
 }
 
-export async function updateForm(
-  db: D1Database,
-  id: string,
-  input: UpdateFormInput,
-): Promise<Form | null> {
-  const existing = await getFormById(db, id);
-  if (!existing) return null;
-
-  const now = jstNow();
-
-  await db
-    .prepare(
-      `UPDATE forms
-       SET name = ?,
-           description = ?,
-           fields = ?,
-           on_submit_tag_id = ?,
-           on_submit_scenario_id = ?,
-           on_submit_message_type = ?,
-           on_submit_message_content = ?,
-           save_to_metadata = ?,
-           is_active = ?,
-           updated_at = ?
-       WHERE id = ?`,
-    )
-    .bind(
-      input.name ?? existing.name,
-      'description' in input ? (input.description ?? null) : existing.description,
-      input.fields ?? existing.fields,
-      'onSubmitTagId' in input ? (input.onSubmitTagId ?? null) : existing.on_submit_tag_id,
-      'onSubmitScenarioId' in input
-        ? (input.onSubmitScenarioId ?? null)
-        : existing.on_submit_scenario_id,
-      'onSubmitMessageType' in input
-        ? (input.onSubmitMessageType ?? null)
-        : existing.on_submit_message_type,
-      'onSubmitMessageContent' in input
-        ? (input.onSubmitMessageContent ?? null)
-        : existing.on_submit_message_content,
-      'saveToMetadata' in input
-        ? (input.saveToMetadata !== false ? 1 : 0)
-        : existing.save_to_metadata,
-      'isActive' in input ? (input.isActive ? 1 : 0) : existing.is_active,
-      now,
-      id,
-    )
-    .run();
-
-  return getFormById(db, id);
+export async function updateForm(db:D1Database,id:string,input:UpdateFormInput,opts:{accountId?:string}={}):Promise<Form|null>{
+ const mapping={name:'name',description:'description',fields:'fields',onSubmitTagId:'on_submit_tag_id',onSubmitScenarioId:'on_submit_scenario_id',onSubmitMessageType:'on_submit_message_type',onSubmitMessageContent:'on_submit_message_content',saveToMetadata:'save_to_metadata',isActive:'is_active'} as const;
+ const set:string[]=[],values:unknown[]=[];
+ for(const [key,column]of Object.entries(mapping)){
+  const value=input[key as keyof UpdateFormInput];if(value===undefined)continue;
+  set.push(column+'=?');values.push(['saveToMetadata','isActive'].includes(key)?value?1:0:value);
+ }
+ if(!set.length){const row=await getFormById(db,id);return row&&(!opts.accountId||row.account_id===opts.accountId)?row:null;}
+ set.push('updated_at=?');values.push(jstNow(),id);
+ let scope='';if(opts.accountId){scope+=' AND account_id=?';values.push(opts.accountId);
+  for(const [key,table]of [['onSubmitTagId','tags'],['onSubmitScenarioId','scenarios']] as const){
+   if(input[key]!==undefined&&input[key]!==null){scope+=` AND EXISTS(SELECT 1 FROM ${table} WHERE id=? AND account_id=forms.account_id)`;values.push(input[key]);}
+  }
+  if(input.isActive===true){
+   // Current references are checked atomically when an existing form reopens;
+   // explicit new references are independently checked by the predicates above.
+   if(input.onSubmitTagId===undefined)scope+=" AND (on_submit_tag_id IS NULL OR EXISTS(SELECT 1 FROM tags WHERE id=forms.on_submit_tag_id AND account_id=forms.account_id))";
+   if(input.onSubmitScenarioId===undefined)scope+=" AND (on_submit_scenario_id IS NULL OR EXISTS(SELECT 1 FROM scenarios WHERE id=forms.on_submit_scenario_id AND account_id=forms.account_id))";
+  }
+ }
+ return db.prepare(`UPDATE forms SET ${set.join(',')} WHERE id=?${scope} RETURNING *`).bind(...values).first<Form>();
 }
-
-export async function deleteForm(db: D1Database, id: string): Promise<void> {
-  await db.prepare(`DELETE FROM forms WHERE id = ?`).bind(id).run();
+export async function deleteForm(db:D1Database,id:string,opts:{accountId?:string}={}):Promise<boolean>{
+ const row=opts.accountId?await db.prepare('DELETE FROM forms WHERE id=? AND account_id=? RETURNING id').bind(id,opts.accountId).first():await db.prepare('DELETE FROM forms WHERE id=? RETURNING id').bind(id).first();return !!row;
 }
 
 // ── Submissions ───────────────────────────────────────────────────────────────
@@ -171,14 +143,16 @@ export async function deleteForm(db: D1Database, id: string): Promise<void> {
 export async function getFormSubmissions(
   db: D1Database,
   formId: string,
+  opts:{accountId?:string}={},
 ): Promise<FormSubmission[]> {
   const result = await db
     .prepare(
       `SELECT fs.id,fs.form_id,fs.follower_id AS friend_id,fs.answers AS data,fs.submitted_at AS created_at,fs.side_effect_state, f.name as friend_name FROM form_submissions fs
-       LEFT JOIN followers f ON f.id = fs.follower_id
-       WHERE fs.form_id = ? ORDER BY fs.submitted_at DESC,fs.id DESC`,
+       JOIN forms form ON form.id=fs.form_id
+       LEFT JOIN followers f ON f.id = fs.follower_id AND f.account_id=form.account_id
+       WHERE fs.form_id = ? AND (? IS NULL OR (form.account_id=? AND f.account_id=form.account_id)) ORDER BY fs.submitted_at DESC,fs.id DESC`,
     )
-    .bind(formId)
+    .bind(formId,opts.accountId??null,opts.accountId??null)
     .all<FormSubmission & { friend_name: string | null }>();
   return result.results;
 }
