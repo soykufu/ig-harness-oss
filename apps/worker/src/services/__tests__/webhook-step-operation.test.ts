@@ -10,7 +10,7 @@ it.each(['primary','standby','paused'])('uses a version-bound immediate step cli
  const event={sender:{id:'user-1'},recipient:{id:'111'},timestamp:Date.now(),message:{mid:'inbound',text:'guide'}};
  await handleMessagingEvent(f.db,f.client as any,event,undefined,undefined,'a',mode==='standby',factory);
  if(mode==='primary'){
-  expect(factory).toHaveBeenCalledOnce();expect(factory).toHaveBeenCalledWith('step:1:1',expect.stringMatching(/^[a-f0-9]{64}$/));expect(keyed.sendText).toHaveBeenCalledOnce();
+  expect(factory).toHaveBeenCalledOnce();expect(factory).toHaveBeenCalledWith('step:1:1',expect.stringMatching(/^[a-f0-9]{64}$/),expect.stringMatching(/^[a-f0-9]{64}$/));expect(keyed.sendText).toHaveBeenCalledOnce();
   await handleMessagingEvent(f.db,f.client as any,event,undefined,undefined,'a',false,factory);expect(factory).toHaveBeenCalledOnce();
  }else{expect(factory).not.toHaveBeenCalled();expect(keyed.sendText).not.toHaveBeenCalled();}
  expect(f.client.sendText).not.toHaveBeenCalled();

@@ -14,7 +14,7 @@ import { messagingEligibility } from './messaging-window.js';
  * Do not generate a new operation key to retry a failed/unknown delivery.
  */
 export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
-  operation: { key: string; ownerEpoch: string; definitionVersion?: string; humanReply?: HumanReplyInput } | undefined,
+  operation: { key: string; ownerEpoch: string; definitionVersion?: string; subjectVersion?: string; humanReply?: HumanReplyInput } | undefined,
   guard: () => Promise<void>, now = Date.now): MessageLifecycle {
   let slot = 0;
   let failed = false;
@@ -58,7 +58,7 @@ export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
       if (expectedRecipient) {
         const follower = await db.prepare('SELECT id,metadata FROM followers WHERE account_id=? AND igsid=?').bind(accountId,expectedRecipient).first<{id:number;metadata:string}>();
         if (!follower || await messagingEligibility(db,follower.id,accountId,nowMs)!=='eligible') throw new Error('Recruitment recipient is not eligible');
-        if (operation.key.startsWith('step:')) await assertRecruitmentStepReady(db, accountId, follower.id, operation.key, operation.definitionVersion);
+        if (operation.key.startsWith('step:')) await assertRecruitmentStepReady(db, accountId, follower.id, operation.key, operation.definitionVersion, operation.subjectVersion);
         if (operation.key.startsWith('broadcast:')) await assertRecruitmentBroadcastReady(db,accountId,follower.id,operation.key,operation.definitionVersion,nowMs);
         if(operation.humanReply){
           if(operation.humanReply.followerId!==follower.id)throw Error('Human reply recipient changed');

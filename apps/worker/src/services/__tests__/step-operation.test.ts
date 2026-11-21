@@ -16,7 +16,7 @@ it('binds the durable enrollment and step, with no shared sender or duplicate se
  const f=await fixture();const factory=vi.fn(async()=>f.keyed as any);
  await processSingleDelivery(f.db,f.shared as any,f.fs,undefined,true,factory);
  await processSingleDelivery(f.db,f.shared as any,f.fs,undefined,true,factory);
- expect(factory).toHaveBeenCalledTimes(1);expect(factory).toHaveBeenCalledWith('step:1:1',expect.stringMatching(/^[a-f0-9]{64}$/));expect(f.keyed.sendText).toHaveBeenCalledOnce();expect(f.shared.sendText).not.toHaveBeenCalled();
+ expect(factory).toHaveBeenCalledTimes(1);expect(factory).toHaveBeenCalledWith('step:1:1',expect.stringMatching(/^[a-f0-9]{64}$/),expect.stringMatching(/^[a-f0-9]{64}$/));expect(f.keyed.sendText).toHaveBeenCalledOnce();expect(f.shared.sendText).not.toHaveBeenCalled();
 });
 it('holds rather than falling back when authority cannot be read',async()=>{
  const f=await fixture();await expect(processSingleDelivery(f.db,f.shared as any,f.fs,undefined,true,async()=>{throw Error('missing owner');})).rejects.toThrow();

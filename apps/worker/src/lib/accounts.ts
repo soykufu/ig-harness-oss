@@ -183,7 +183,7 @@ export async function getAccountClient(
   env: AccountEnv,
   db: D1Database,
   account: IgAccount,
-  options: { forHealthProbe?: boolean; skipTokenRefresh?: boolean; recruitmentOperation?: { key: string; ownerEpoch: string; definitionVersion?: string; humanReply?: HumanReplyInput } } = {},
+  options: { forHealthProbe?: boolean; skipTokenRefresh?: boolean; recruitmentOperation?: { key: string; ownerEpoch: string; definitionVersion?: string; subjectVersion?: string; humanReply?: HumanReplyInput } } = {},
 ): Promise<InstagramClient> {
   await assertGraphAvailable(db,account.id);
   if (!options.forHealthProbe) {
@@ -240,14 +240,15 @@ export async function getAccountClient(
  * reconcile ownership, unpause, or mint an epoch. Final SDK checks re-read it. */
 export function recruitmentJobClientFactory(env: AccountEnv | undefined, db: D1Database, account: IgAccount) {
   if (env?.RECRUITMENT_LEDGER_ENFORCEMENT !== '1') return undefined;
-  return async (key: string, definitionVersion?: string): Promise<InstagramClient> => {
+  return async (key: string, definitionVersion?: string, subjectVersion?:string): Promise<InstagramClient> => {
     if (!/^(comment|comment-dm|step|broadcast):.+/.test(key) || key.length > 500) throw new Error('Invalid comment operation identity');
     if ((key.startsWith('step:') || key.startsWith('broadcast:')) && !/^[a-f0-9]{64}$/.test(definitionVersion??'')) throw new Error('Step version evidence required');
+    if (key.startsWith('step:') && !/^[a-f0-9]{64}$/.test(subjectVersion??'')) throw Error('Step substitution evidence required');
     const now = Date.now();
     const control = await db.prepare(`SELECT owner_epoch FROM recruitment_outbound_control WHERE account_id=? AND owner='harness' AND reconciled_at_ms BETWEEN ? AND ?`)
       .bind(account.id,now-60_000,now).first<{owner_epoch:string}>();
     if (!control?.owner_epoch) throw new Error('Comment ownership requires reconciliation');
-    return getAccountClient(env, db, account, {skipTokenRefresh:true,recruitmentOperation:{key,ownerEpoch:control.owner_epoch,definitionVersion}});
+    return getAccountClient(env, db, account, {skipTokenRefresh:true,recruitmentOperation:{key,ownerEpoch:control.owner_epoch,definitionVersion,subjectVersion}});
   };
 }
 

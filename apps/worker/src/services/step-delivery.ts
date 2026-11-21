@@ -1,4 +1,4 @@
-import { recruitmentStepVersion } from './recruitment-step-version.js';
+import { recruitmentStepVersion,recruitmentStepSubjectVersion,stepVariableValues } from './recruitment-step-version.js';
 import { messagingEligibility } from './messaging-window.js';
 import {
   getFriendScenariosDueForDelivery,
@@ -28,13 +28,21 @@ export function expandVariables(
   // but other callers (e.g., enrollment paths from JSON-decoded API bodies)
   // pass it as a string. Accept either and coerce — `replace()`'s second arg
   // must be a string.
-  friend: { id: string | number; display_name: string | null; username?: string | null },
+  friend: { id: string | number; display_name?: string | null; name?:string|null; username?: string | null },
 ): string {
-  let result = content;
-  result = result.replace(/\{\{name\}\}/g, friend.display_name || friend.username || '');
-  result = result.replace(/\{\{username\}\}/g, (friend as unknown as Record<string, unknown>).username as string || '');
-  result = result.replace(/\{\{friend_id\}\}/g, String(friend.id));
-  return result;
+  const values=stepVariableValues(friend);
+  // One pass preserves literal $&, quotes and template-like profile names.
+  const replace=(text:string)=>text.replace(/\{\{(name|username|friend_id)\}\}/g,(_match,key:keyof typeof values)=>values[key]);
+  const visit=(value:unknown):unknown=>{
+    if(typeof value==='string')return replace(value);
+    if(Array.isArray(value))return value.map(visit);
+    if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,visit(v)]));
+    return value;
+  };
+  // Expand JSON values after parsing, so a quote in a name remains data and
+  // cannot break the message or introduce additional blocks/recipient fields.
+  let parsed:unknown;try{parsed=JSON.parse(content);}catch{return replace(content);}
+  return JSON.stringify(visit(parsed));
 }
 
 // B-06: the delivery window now comes from one configurable setting
@@ -45,7 +53,7 @@ export async function processStepDeliveries(
   igClient: InstagramClient,
   workerUrl?: string,
   accountId?: string,
-  clientForOperation?: (key: string, stepVersion?: string) => Promise<InstagramClient>,
+  clientForOperation?: (key: string, stepVersion?: string, subjectVersion?:string) => Promise<InstagramClient>,
 ): Promise<void> {
   const now = jstNow();
   // Operator stop switch: due steps stay scheduled, resume after unpausing.
@@ -80,7 +88,7 @@ export async function processSingleDelivery(
   },
   _workerUrl?: string,
   immediate = false,
-  clientForOperation?: (key: string, stepVersion?: string) => Promise<InstagramClient>,
+  clientForOperation?: (key: string, stepVersion?: string, subjectVersion?:string) => Promise<InstagramClient>,
 ): Promise<void> {
   const friend = await getFriendById(db, fs.follower_id);
   if (!friend) {
@@ -143,6 +151,7 @@ export async function processSingleDelivery(
   }
 
   // Expand template variables
+  JSON.parse(currentStep.body); // The authored message must already be valid JSON.
   const expandedContent = expandVariables(currentStep.body, friend);
   // Send via Instagram Messaging API
   const igsid = friend.igsid;
@@ -150,7 +159,7 @@ export async function processSingleDelivery(
   const claim = await db.prepare("UPDATE follower_scenarios SET next_step_at=NULL,end_reason='delivery_in_progress' WHERE id=? AND status='active' AND current_step=? AND next_step_at IS ? RETURNING id").bind(fs.id,fs.current_step,fs.next_step_at).first();
   if (!claim) return;
   try {
-    const sender = clientForOperation ? await clientForOperation(`step:${fs.id}:${currentStep.id}`, await recruitmentStepVersion(currentStep)) : igClient;
+    const sender = clientForOperation ? await clientForOperation(`step:${fs.id}:${currentStep.id}`, await recruitmentStepVersion(currentStep), await recruitmentStepSubjectVersion(friend)) : igClient;
     await sendIgMessage(sender, igsid, currentStep.message_type, parsed);
   }
   catch (error) {
