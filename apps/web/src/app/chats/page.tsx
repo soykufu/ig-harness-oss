@@ -2,10 +2,12 @@
 
 import type { JSX } from 'react'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { fetchApi, type FollowerApi, type FollowerListResponse } from '@/lib/api'
+import { fetchApi, getApiAccountId, type FollowerApi, type FollowerListResponse } from '@/lib/api'
 import type { ApiResponse } from '@ig-harness/shared'
 import { FollowerAvatar } from '@/components/follower-avatar'
 import { RichBlocksCompact } from '@/components/rich-message-preview'
+import { HumanReplyPanel, hasHumanReplyPending } from '@/components/human-reply-panel'
+import { useAccount } from '@/contexts/account-context'
 
 interface MessageLog {
   id: string
@@ -142,11 +144,18 @@ function DetailPanel({ friend }: { friend: FollowerApi }) {
   )
 }
 
-function MessagePanel({ friendId, onBack }: {
+function MessagePanel({ friendId, accountId, recipient, onBack }: {
   friendId: string
+  accountId: string
+  recipient: string
   onBack: () => void
 }) {
   const [message, setMessage] = useState('')
+  const [humanOpen, setHumanOpen] = useState(false)
+  const [humanPending, setHumanPending] = useState(true)
+  const activeRef = useRef(true)
+  useEffect(() => { activeRef.current = true; setHumanPending(hasHumanReplyPending(accountId, friendId)); return () => { activeRef.current = false } }, [accountId, friendId])
+  const current = () => activeRef.current && getApiAccountId() === accountId
   const [sending, setSending] = useState(false)
   const [checking, setChecking] = useState(false)
   const [deliveryNotice, setDeliveryNotice] = useState('')
@@ -208,12 +217,14 @@ function MessagePanel({ friendId, onBack }: {
   }
 
   const handleSend = async () => {
-    if (!message.trim() || sending || sendLockRef.current) return
+    if (!message.trim() || sending || sendLockRef.current || humanOpen || !current()) return
     sendLockRef.current = true
     setSending(true)
     try {
+      if (hasHumanReplyPending(accountId, friendId)) throw new Error('確認待ちの有人返信を先に照合してください。')
       const content = JSON.stringify({ text: message.trim() })
       const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content)))).map(b => b.toString(16).padStart(2, '0')).join('')
+      if (!current()) return
       const storageKey = `ig-manual-intent:${friendId}`
       const stored = sessionStorage.getItem(storageKey)
       const pending = stored ? JSON.parse(stored) as { nonce: string; digest: string } : { nonce: crypto.randomUUID(), digest }
@@ -221,6 +232,7 @@ function MessagePanel({ friendId, onBack }: {
       // Persist only the opaque nonce and hash, never the message text. Retain
       // it on timeout/reload so the same action cannot acquire a fresh key.
       sessionStorage.setItem(storageKey, JSON.stringify(pending))
+      if (!current() || hasHumanReplyPending(accountId, friendId)) throw new Error('宛先または確認待ちの状態が変わりました。')
       const response = await fetchApi<{success:boolean;data?:{replayed?:boolean}}>(`/api/friends/${friendId}/messages`, {
         method: 'POST',
         headers: { 'Idempotency-Key': pending.nonce },
@@ -244,7 +256,7 @@ function MessagePanel({ friendId, onBack }: {
   }
 
   const checkDelivery = async () => {
-    if (sendLockRef.current) return
+    if (sendLockRef.current || !current()) return
     sendLockRef.current = true
     setChecking(true)
     try {
@@ -310,7 +322,7 @@ function MessagePanel({ friendId, onBack }: {
       <div className="px-3 py-2 border-t border-kumo-line bg-kumo-base shrink-0">
         <p role="status" className="mb-2 text-xs text-kumo-subtle">{holdNotice}</p>
         <div className="flex gap-2">
-          <input type="text" value={message} disabled={sending || checking}
+          <input type="text" value={message} disabled={sending || checking || humanOpen || humanPending}
             onChange={(e) => setMessage(e.target.value)}
             onCompositionStart={() => { isComposingRef.current = true }}
             onCompositionEnd={() => { isComposingRef.current = false }}
@@ -320,7 +332,7 @@ function MessagePanel({ friendId, onBack }: {
             }}
             placeholder="メッセージを入力..."
             className="flex-1 border border-kumo-line rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-500/30 focus:border-pink-500" />
-          <button onClick={handleSend} disabled={!message.trim() || sending || checking}
+          <button onClick={handleSend} disabled={!message.trim() || sending || checking || humanOpen || humanPending}
             className="px-3 py-1.5 rounded-lg text-white text-sm font-medium disabled:opacity-40"
             style={{ backgroundColor: '#E1306C' }}>
             {sending ? '...' : '送信'}
@@ -330,29 +342,38 @@ function MessagePanel({ friendId, onBack }: {
           {checking ? '記録を確認中…' : '送信結果を確認'}
         </button>
         {deliveryNotice && <p role="status" className="mt-1 text-xs text-kumo-subtle">{deliveryNotice}</p>}
+        <HumanReplyPanel accountId={accountId} friendId={friendId} recipient={recipient} busy={sending || checking} onOpenChange={setHumanOpen} onSent={() => { setHumanPending(hasHumanReplyPending(accountId, friendId)); loadMessages() }} />
       </div>
     </div>
   )
 }
 
 export default function ChatsPage() {
+  const { selectedAccountId, loading: accountLoading } = useAccount()
   const [followers, setFollowers] = useState<FollowerApi[]>([])
+  const [loadedAccountId, setLoadedAccountId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
 
   useEffect(() => {
-    fetchApi<ApiResponse<FollowerListResponse>>('/api/friends?limit=100&sort=recent')
-      .then((res) => setFollowers(res.data?.items ?? []))
-      .finally(() => setLoading(false))
-  }, [])
+    const ac = new AbortController()
+    setSelectedId(null); setFollowers([]); setLoadedAccountId(null); setLoading(true)
+    if (accountLoading || !selectedAccountId) { setLoading(false); return () => ac.abort() }
+    fetchApi<ApiResponse<FollowerListResponse>>('/api/friends?limit=100&sort=recent', { signal: ac.signal })
+      .then((res) => { if (!ac.signal.aborted) { setFollowers(res.data?.items ?? []); setLoadedAccountId(selectedAccountId) } })
+      .catch(() => {})
+      .finally(() => { if (!ac.signal.aborted) setLoading(false) })
+    return () => ac.abort()
+  }, [selectedAccountId, accountLoading])
 
-  const selected = followers.find((f) => String(f.id) === selectedId) ?? null
+  const currentFollowers = loadedAccountId === selectedAccountId ? followers : []
+  const selected = currentFollowers.find((f) => String(f.id) === selectedId) ?? null
   const filtered = search
-    ? followers.filter((f) =>
+    ? currentFollowers.filter((f) =>
         (f.username ?? '').toLowerCase().includes(search.toLowerCase()) ||
         (f.displayName ?? '').toLowerCase().includes(search.toLowerCase()))
-    : followers
+    : currentFollowers
 
   return (
     <div className="-mx-4 -mt-[72px] lg:-mx-8 lg:-mt-8 -mb-6 lg:-mb-8 flex flex-col h-screen">
@@ -360,7 +381,7 @@ export default function ChatsPage() {
         <div className="w-6 h-6 rounded flex items-center justify-center text-white text-[10px] font-bold"
           style={{ background: 'linear-gradient(135deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888)' }}>IG</div>
         <h1 className="text-sm font-bold text-kumo-default">チャット</h1>
-        <span className="text-[11px] text-kumo-subtle">{followers.length} 件</span>
+        <span className="text-[11px] text-kumo-subtle">{currentFollowers.length} 件</span>
       </div>
 
       <div className="flex flex-1 min-h-0">
@@ -407,12 +428,12 @@ export default function ChatsPage() {
         <div className={`flex-1 flex flex-col min-w-0 min-h-0 border-r border-kumo-line ${
           selectedId ? 'flex' : 'hidden lg:flex'
         }`}>
-          {!selectedId ? (
+          {!selected || !selectedAccountId ? (
             <div className="flex-1 flex items-center justify-center bg-kumo-canvas">
               <p className="text-sm text-kumo-subtle">フォロワーを選択</p>
             </div>
           ) : (
-            <MessagePanel key={selectedId} friendId={selectedId} onBack={() => setSelectedId(null)} />
+            <MessagePanel key={`${selectedAccountId}:${selectedId}`} accountId={selectedAccountId!} friendId={String(selected.id)} recipient={selected.displayName || selected.username || String(selected.id)} onBack={() => setSelectedId(null)} />
           )}
         </div>
 

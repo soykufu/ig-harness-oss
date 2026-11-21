@@ -56,6 +56,7 @@ export class ApiError extends Error {
 // --- account scoping ---------------------------------------------------
 let currentAccountId: string | null = null
 export function setApiAccountId(id: string | null) { currentAccountId = id }
+export function getApiAccountId(): string | null { return currentAccountId }
 
 // Shared resources are account-agnostic; everything else gets ?account_id=.
 const ACCOUNT_AGNOSTIC = ['/api/auth', '/api/accounts', '/api/staff', '/api/images', '/api/line-connections', '/api/integrations', '/api/health']
