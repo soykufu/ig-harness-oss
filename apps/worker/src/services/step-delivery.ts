@@ -1,3 +1,4 @@
+import {isRecruitmentDeliveryWindow} from './recruitment-automation-admission.js';
 import { recruitmentStepVersion,recruitmentStepSubjectVersion,stepVariableValues } from './recruitment-step-version.js';
 import { messagingEligibility } from './messaging-window.js';
 import {
@@ -55,6 +56,7 @@ export async function processStepDeliveries(
   accountId?: string,
   clientForOperation?: (key: string, stepVersion?: string, subjectVersion?:string) => Promise<InstagramClient>,
 ): Promise<void> {
+  if(clientForOperation&&!isRecruitmentDeliveryWindow())return;
   const now = jstNow();
   // Operator stop switch: due steps stay scheduled, resume after unpausing.
   if (await isOutboundPaused(db)) return;
@@ -90,6 +92,7 @@ export async function processSingleDelivery(
   immediate = false,
   clientForOperation?: (key: string, stepVersion?: string, subjectVersion?:string) => Promise<InstagramClient>,
 ): Promise<void> {
+  if(clientForOperation&&!isRecruitmentDeliveryWindow())return;
   const friend = await getFriendById(db, fs.follower_id);
   if (!friend) {
     await completeFriendScenario(db, fs.id);

@@ -299,6 +299,9 @@ export async function getScenarioSteps(
 // Friend Scenario Enrollments
 // ============================================================
 
+/** A verified worker snapshot; optional only for legacy/manual callers. */
+export type RecruitmentEnrollmentGuard={accountId:string;metadata:string;ownerEpoch:string;subjectHash:string};
+
 export async function enrollFriendInScenario(
   db: D1Database,
   // followers.id is INTEGER PRIMARY KEY in SQLite, so callers reading rows
@@ -306,6 +309,7 @@ export async function enrollFriendInScenario(
   // route params) pass strings. D1 accepts both via `.bind()`.
   friendId: string | number,
   scenarioId: string,
+  recruitment?:RecruitmentEnrollmentGuard,
 ): Promise<FriendScenario> {
   const id = crypto.randomUUID();
   const now = jstNow();
@@ -317,6 +321,36 @@ export async function enrollFriendInScenario(
     )
     .bind(scenarioId)
     .first<{ step_order: number; delay_minutes: number }>();
+
+  if(recruitment){
+    const at=Date.now();
+    const next=firstStep?enforceWindow(await getDeliveryWindowJst(db),new Date(at+9*3600000+firstStep.delay_minutes*60000)).toISOString().slice(0,-1)+'+09:00':null;
+    const eligible=`EXISTS(SELECT 1 FROM followers f JOIN scenarios s ON s.account_id=f.account_id AND s.id=? AND s.is_active=1
+      JOIN ig_accounts a ON a.id=f.account_id AND a.is_active=1
+      JOIN recruitment_outbound_control c ON c.account_id=f.account_id AND c.owner='harness' AND c.owner_epoch=? AND c.reconciled_at_ms BETWEEN ? AND ?
+      WHERE f.id=? AND f.account_id=? AND f.metadata IS ? AND f.messaging_owner='primary'
+      AND julianday(f.last_inbound_at)>julianday(?) AND julianday(f.last_inbound_at)<=julianday(?)
+      AND json_extract(f.metadata,'$.recruitment_delivery.state')='active'
+      AND json_extract(f.metadata,'$.recruitment_delivery.owner_epoch')=c.owner_epoch
+      AND json_extract(f.metadata,'$.recruitment_delivery.observed_at_ms') BETWEEN ? AND ?
+      AND json_extract(f.metadata,'$.recruitment_delivery.valid_until_ms')>? AND json_extract(f.metadata,'$.recruitment_delivery.valid_until_ms')<=json_extract(f.metadata,'$.recruitment_delivery.observed_at_ms')+300000
+      AND EXISTS(SELECT 1 FROM integration_settings WHERE key='outbound_paused' AND value='0')
+      AND NOT EXISTS(SELECT 1 FROM data_deletion_locks WHERE account_id=f.account_id)
+      AND NOT EXISTS(SELECT 1 FROM recruitment_inbound_holds WHERE account_id=f.account_id AND subject_hash=?)
+      AND NOT EXISTS(SELECT 1 FROM recruitment_outbound_operations WHERE account_id=f.account_id AND (state='uncertain' OR reserved_at_ms>? OR (state='reserved' AND reserved_at_ms<=?)))
+      AND NOT EXISTS(SELECT 1 FROM recruitment_gate_cta_operations WHERE account_id=f.account_id AND state='uncertain')
+      AND NOT EXISTS(SELECT 1 FROM recruitment_gate_operations WHERE account_id=f.account_id AND state='uncertain')
+      AND NOT EXISTS(SELECT 1 FROM comment_rule_jobs WHERE account_id=f.account_id AND public_reply_status IN ('processing','uncertain'))
+      AND NOT EXISTS(SELECT 1 FROM gate_deliveries d JOIN engagement_gates g ON g.id=d.gate_id WHERE g.account_id=f.account_id AND d.end_reason='outcome_unknown'))`;
+    const bindings=[scenarioId,recruitment.ownerEpoch,at-60000,at,friendId,recruitment.accountId,recruitment.metadata,new Date(at-86400000).toISOString(),new Date(at).toISOString(),at-300000,at,at,recruitment.subjectHash,at,at-60000];
+    const row=await db.prepare(`INSERT INTO follower_scenarios(follower_id,scenario_id,current_step,status,enrolled_at,next_step_at,updated_at)
+      SELECT ?,?,0,?,?,?,? WHERE ${eligible} AND NOT EXISTS(SELECT 1 FROM follower_scenarios WHERE follower_id=? AND scenario_id=?) RETURNING *`)
+      .bind(friendId,scenarioId,firstStep?'active':'completed',now,next,now,...bindings,friendId,scenarioId).first<FriendScenario>();
+    if(row)return row;
+    const existing=await db.prepare(`SELECT fs.* FROM follower_scenarios fs WHERE fs.follower_id=? AND fs.scenario_id=? AND ${eligible} ORDER BY fs.id DESC LIMIT 1`).bind(friendId,scenarioId,...bindings).first<FriendScenario>();
+    if(existing)return existing;
+    throw Error('Recruitment enrollment requires reconciliation');
+  }
 
   // A scenario with no steps is immediately completed — no stuck active enrollment.
   if (!firstStep) {

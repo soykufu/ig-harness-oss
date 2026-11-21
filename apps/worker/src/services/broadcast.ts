@@ -1,3 +1,4 @@
+import {isRecruitmentDeliveryWindow} from './recruitment-automation-admission.js';
 import {recruitmentBroadcastVersion} from './recruitment-broadcast-admission.js';
 import { messagingEligibility } from './messaging-window.js';
 import { getBroadcastById } from '@ig-harness/db';
@@ -26,6 +27,7 @@ export async function processBroadcastSend(
   _workerUrl?: string, accountId?: string,
   clientForOperation?: (key:string,version?:string)=>Promise<InstagramClient>,
 ): Promise<Broadcast> {
+  if(clientForOperation&&!isRecruitmentDeliveryWindow())throw Error('Outside recruitment delivery window');
   let broadcast = await getBroadcastById(db, broadcastId);
   if (!broadcast) throw new Error(`Broadcast ${broadcastId} not found`);
   if (!broadcast.account_id || (accountId && broadcast.account_id !== accountId)) throw new Error('Broadcast account mismatch');
@@ -114,6 +116,7 @@ export async function processBroadcastSend(
 
 export async function processScheduledBroadcasts(db: D1Database, client: InstagramClient, workerUrl?: string, accountId?: string, clientForOperation?: (key:string,version?:string)=>Promise<InstagramClient>): Promise<void> {
   if (!accountId) return;
+  if(clientForOperation&&!isRecruitmentDeliveryWindow())return;
   // Operator stop switch: broadcasts stay scheduled, resume after unpausing.
   if (await isOutboundPaused(db)) return;
   const rows = await db.prepare(`SELECT id FROM broadcasts WHERE account_id=? AND

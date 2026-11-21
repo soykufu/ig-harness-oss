@@ -1,3 +1,4 @@
+import {isRecruitmentDeliveryWindow} from './recruitment-automation-admission.js';
 import {sendRecruitmentGateCta,type GateCtaContext,type GateCtaProof} from './recruitment-gate-cta.js';
 import {handleRecruitmentGatePostback,type GatePostbackProof} from './recruitment-gate-postback.js';
 import {gateFollowupKey,gateFollowupVersion,gateFollowupPayloadVersion,type GateFollowupProof} from './recruitment-gate-followup.js';
@@ -570,6 +571,7 @@ export async function processFollowupDrip(
 ): Promise<{ sent: number; skipped: number }> {
   // Operator stop switch: followups stay queued, resume after unpausing.
   if (await isOutboundPaused(db)) return { sent: 0, skipped: 0 };
+  if(clientFactory&&!isRecruitmentDeliveryWindow())return {sent:0,skipped:0};
   const now = new Date().toISOString().slice(0, 19) + 'Z';
   // When accountId is given, scope the due extraction to deliveries whose
   // gate belongs to that IG account (multi-account cron loop).

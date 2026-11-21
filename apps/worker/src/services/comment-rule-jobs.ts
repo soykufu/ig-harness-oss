@@ -1,3 +1,4 @@
+import {isRecruitmentDeliveryWindow} from './recruitment-automation-admission.js';
 import {claimRecruitmentPublicReply,recruitmentPublicReplyVersion} from './recruitment-public-reply.js';
 import { InstagramApiError, InstagramTransportError, type InstagramClient } from '@ig-harness/ig-sdk';
 import { deliveryFailure, sendIgMessage, validateBroadcastMessage } from './broadcast.js';
@@ -73,6 +74,7 @@ export async function resumeCommentJobs(db: D1Database, followerId: number, acco
 }
 export type CommentJobClientFactory = (operationKey: string, definitionVersion?:string) => Promise<InstagramClient>;
 export async function processCommentRuleJobs(db: D1Database, client: InstagramClient, accountId: string, clientForOperation?: CommentJobClientFactory): Promise<void> {
+    if(clientForOperation&&!isRecruitmentDeliveryWindow())return;
     // Operator stop switch: jobs stay pending, they resume after unpausing.
     if (await isOutboundPaused(db)) return;
     await db.prepare("UPDATE comment_rule_jobs SET status='uncertain', reason='interrupted' WHERE account_id=? AND status='processing' AND julianday(started_at)<julianday(?)").bind(accountId, new Date(Date.now() - 5 * 60000).toISOString()).run();

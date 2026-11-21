@@ -1,3 +1,4 @@
+import {isRecruitmentDeliveryWindow,assertRecruitmentAutomationAdmission} from '../services/recruitment-automation-admission.js';
 import { readAppSecret, type CredentialEnv } from '../lib/credential-crypto.js';
 import { ingestRecruitmentInboundHolds, InvalidRecruitmentInbound, RecruitmentInboundBusy } from '../services/recruitment-inbound-holds.js';
 import { messagingEligibility } from '../services/messaging-window.js';
@@ -200,6 +201,7 @@ webhook.post('/webhook', async (c) => {
 export async function processQueuedWebhooks(db: D1Database, client: InstagramClient, account: IgAccount, workerUrl?: string, env?: AccountEnv): Promise<void> {
   // Operator stop switch: leave events pending, they resume after unpausing.
   if (await isOutboundPaused(db)) return;
+  if(env?.RECRUITMENT_LEDGER_ENFORCEMENT==='1'&&!isRecruitmentDeliveryWindow())return;
   await drainWebhookEvents(db, account.id, async (event) => {
     const value = JSON.parse(event.payload);
     const ref = toIgAccountRef(account, env);
@@ -302,6 +304,17 @@ export async function handleMessagingEvent(
     if (event.message || event.postback) await logMessage(db,{ followerId:follower.id,direction:'in',messageType:'text',triggerSource:null,body:JSON.stringify({ text:event.message?.text ?? event.postback?.title ?? '[attachment]', channel:observeOnly?'standby':'messaging' }) });
     return;
   }
+  if(clientForOperation){
+    try{
+      if(!accountId)throw Error('Recruitment account missing');
+      await assertRecruitmentAutomationAdmission(db,accountId,follower.id);
+    }catch{
+      // Retain the actual incoming conversation, but create no automation,
+      // linkage, scenario, outbound entry or external forwarding side effect.
+      if(event.message||event.postback)await logMessage(db,{followerId:follower.id,direction:'in',messageType:event.message?.quick_reply?'quick_reply':'text',triggerSource:null,body:JSON.stringify({text:event.message?.text??event.postback?.title??'[attachment]',channel:'messaging',automationHeld:true})});
+      return;
+    }
+  }
   if (accountId) await resumeCommentJobs(db,follower.id,accountId);
 
   // Operator stop switch (U22): inbound bookkeeping above still runs, but no
@@ -378,7 +391,8 @@ export async function handleMessagingEvent(
         if (scenario.trigger_type === 'dm_keyword' && scenario.is_active && scenario.trigger_keyword && ref.includes(scenario.trigger_keyword)) {
           const existing = await db.prepare(`SELECT id FROM follower_scenarios WHERE follower_id = ? AND scenario_id = ?`).bind(follower.id, scenario.id).first<{ id: string }>();
           if (!existing) {
-            const friendScenario = await enrollFriendInScenario(db, follower.id, scenario.id);
+            const enrollmentGuard=clientForOperation?await assertRecruitmentAutomationAdmission(db,accountId??'',follower.id):undefined;
+            const friendScenario = await enrollFriendInScenario(db, follower.id, scenario.id,enrollmentGuard);
             const steps = await getScenarioSteps(db, scenario.id);
             const firstStep = steps[0];
             if (firstStep && firstStep.delay_minutes === 0 && friendScenario.status === 'active') {
@@ -415,6 +429,8 @@ export async function handleMessagingEvent(
 
     // Check LINE Harness UUID linkage token
     if (incomingText.startsWith('CONNECT:')) {
+      // Unsigned legacy linkage is not sufficient identity evidence.
+      if(clientForOperation)return;
       const token = incomingText.slice(8).trim();
       // Look up token in tracked_links (ref_code = token, destination contains uid)
       const link = await db
@@ -482,7 +498,8 @@ export async function handleMessagingEvent(
               .bind(follower.id, scenario.id)
               .first<{ id: string }>();
             if (!existing) {
-              const friendScenario = await enrollFriendInScenario(db, follower.id, scenario.id);
+              const enrollmentGuard=clientForOperation?await assertRecruitmentAutomationAdmission(db,accountId??'',follower.id):undefined;
+            const friendScenario = await enrollFriendInScenario(db, follower.id, scenario.id,enrollmentGuard);
 
               // Immediate delivery of first step if delay=0
               const steps = await getScenarioSteps(db, scenario.id);
