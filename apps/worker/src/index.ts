@@ -48,7 +48,7 @@ import { capabilities } from './routes/capabilities.js';
 import { mediaPosts } from './routes/media-posts.js';
 import { messengerProfile } from './routes/messenger-profile.js';
 import { processMediaPosts } from './services/media-publish.js';
-import { ensureDefaultAccount, getAccountClient, toIgAccountRef, commentJobClientFactory } from './lib/accounts.js';
+import { ensureDefaultAccount, getAccountClient, toIgAccountRef, commentJobClientFactory, recruitmentJobClientFactory } from './lib/accounts.js';
 import { recordCronRun, recordTokenValidity } from './lib/health.js';
 
 export type Env = {
@@ -360,7 +360,7 @@ export async function runScheduledJobs(
       }
       const ref = toIgAccountRef(account, env);
       const tasks: Array<[string, Promise<unknown>]> = [];
-      if (work.steps) tasks.push(['steps', processStepDeliveries(env.DB, igClient, env.WORKER_URL, account.id)]);
+      if (work.steps) tasks.push(['steps', processStepDeliveries(env.DB, igClient, env.WORKER_URL, account.id, recruitmentJobClientFactory(env, env.DB, current))]);
       if (work.broadcasts) tasks.push(['broadcasts', processScheduledBroadcasts(env.DB, igClient, env.WORKER_URL, account.id)]);
       if (work.followups) tasks.push(['followups', processFollowupDrip(env.DB, igClient, env.WORKER_URL, undefined, ref, account.id)]);
       if (work.media) tasks.push(['media', processMediaPosts(env.DB, igClient, account.id)]);

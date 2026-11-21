@@ -128,3 +128,22 @@ it.each(['valid','wrong-follower','wrong-igsid','dropped','delivered','ended','i
  if(change==='valid'){await send;expect(fetch).toHaveBeenCalledTimes(1);}
  else {await expect(send).rejects.toThrow();expect(fetch).not.toHaveBeenCalled();}
 });
+
+it.each(['valid','completed','paused-scenario','wrong-account','wrong-follower','claim-lost','advanced','step-deleted','reordered'])(
+ 'checks scheduled step %s after asynchronous message preparation',async change=>{
+ const {sqlite,fetch,make}=await fixture();
+ sqlite.exec("INSERT INTO scenarios(id,name,trigger_type,account_id) VALUES(1,'test','manual','a'); INSERT INTO scenario_steps(id,scenario_id,step_order,delay_minutes,message_type,body) VALUES(1,1,1,0,'text','{}'); INSERT INTO follower_scenarios(id,follower_id,scenario_id,current_step,status,next_step_at,end_reason) VALUES(1,1,1,0,'active',NULL,'delivery_in_progress')");
+ const mutate=()=>{
+  if(change==='completed')sqlite.exec("UPDATE follower_scenarios SET status='completed'");
+  if(change==='paused-scenario')sqlite.exec('UPDATE scenarios SET is_active=0');
+  if(change==='wrong-account'){sqlite.exec("INSERT INTO ig_accounts(id,ig_user_id,access_token,created_at,updated_at) VALUES('b','222','test','2026-01-01','2026-01-01'); UPDATE scenarios SET account_id='b'");}
+  if(change==='wrong-follower'){sqlite.exec("INSERT INTO followers(id,igsid,account_id) VALUES(2,'other','a'); UPDATE follower_scenarios SET follower_id=2");}
+  if(change==='claim-lost')sqlite.exec("UPDATE follower_scenarios SET end_reason=NULL");
+  if(change==='advanced')sqlite.exec('UPDATE follower_scenarios SET current_step=1');
+  if(change==='step-deleted')sqlite.exec('DELETE FROM scenario_steps');
+  if(change==='reordered')sqlite.exec("UPDATE scenario_steps SET step_order=2; INSERT INTO scenario_steps(id,scenario_id,step_order,delay_minutes,message_type,body) VALUES(2,1,1,0,'text','{}')");
+ };
+ const send=make(mutate,'step:1:1').sendText('student','test');
+ if(change==='valid'){await send;expect(fetch).toHaveBeenCalledOnce();}
+ else{await expect(send).rejects.toThrow();expect(fetch).not.toHaveBeenCalled();}
+});

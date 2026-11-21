@@ -1,3 +1,4 @@
+import { assertRecruitmentStepReady } from './recruitment-step-admission.js';
 import { assertRecruitmentBusinessState } from './recruitment-business-state.js';
 export { assertRecruitmentBusinessState } from './recruitment-business-state.js';
 import { assertRecruitmentPrivateReplyReady } from './recruitment-private-admission.js';
@@ -48,6 +49,7 @@ export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
       if (expectedRecipient) {
         const follower = await db.prepare('SELECT id,metadata FROM followers WHERE account_id=? AND igsid=?').bind(accountId,expectedRecipient).first<{id:number;metadata:string}>();
         if (!follower || await messagingEligibility(db,follower.id,accountId,nowMs)!=='eligible') throw new Error('Recruitment recipient is not eligible');
+        if (operation.key.startsWith('step:')) await assertRecruitmentStepReady(db, accountId, follower.id, operation.key);
         assertRecruitmentBusinessState(follower.metadata, operation.ownerEpoch, nowMs);
         await assertNoRecruitmentInboundHold(db,accountId,expectedRecipient);
       } else if(expectedCommentId) {
