@@ -1,3 +1,4 @@
+import {assertGateCtaReady,assertGateCtaPayload,type GateCtaProof} from './recruitment-gate-cta.js';
 import {assertGatePostbackReady,assertGatePostbackPayload,type GatePostbackProof} from './recruitment-gate-postback.js';
 import {assertGateFollowupReady,assertGateFollowupPayload,type GateFollowupProof} from './recruitment-gate-followup.js';
 import {assertRecruitmentRichTestReady,assertRecruitmentRichTestPayload,type RecruitmentRichTest} from './recruitment-rich-test.js';
@@ -17,7 +18,7 @@ import { messagingEligibility } from './messaging-window.js';
  * Do not generate a new operation key to retry a failed/unknown delivery.
  */
 export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
-  operation: { key: string; ownerEpoch: string; definitionVersion?: string; subjectVersion?: string; humanReply?: HumanReplyInput; richTest?: RecruitmentRichTest; gateFollowup?:GateFollowupProof;gatePostback?:GatePostbackProof } | undefined,
+  operation: { key: string; ownerEpoch: string; definitionVersion?: string; subjectVersion?: string; humanReply?: HumanReplyInput; richTest?: RecruitmentRichTest; gateFollowup?:GateFollowupProof;gatePostback?:GatePostbackProof;gateCta?:GateCtaProof } | undefined,
   guard: () => Promise<void>, now = Date.now): MessageLifecycle {
   let slot = 0;
   let failed = false;
@@ -32,6 +33,7 @@ export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
         await guard();
         if(operation.key.startsWith('gate-followup:')&&!operation.gateFollowup)throw Error('Gate follow-up purpose required');
         if((operation.key.startsWith('gate-reward:')||operation.key.startsWith('gate-reminder:'))&&!operation.gatePostback)throw Error('Gate postback purpose required');
+        if(operation.key.startsWith('gate-cta:')&&!operation.gateCta)throw Error('Gate CTA purpose required');
         const nowMs = now();
         if(operation.humanReply){
           const reply=operation.humanReply;const message=payload.message as Record<string,unknown>|undefined;
@@ -44,6 +46,7 @@ export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
           await assertRecruitmentRichTestPayload(db,accountId,operation.richTest,slot,payload);
           await assertRecruitmentRichTestReady(db,accountId,operation,operation.richTest,nowMs);
         }
+        if(operation.gateCta)await assertGateCtaPayload(db,accountId,operation,operation.gateCta,slot,payload,nowMs);
         if(operation.gatePostback)await assertGatePostbackPayload(db,accountId,operation,operation.gatePostback,slot,payload,nowMs);
         if(operation.gateFollowup)await assertGateFollowupPayload(db,accountId,operation,operation.gateFollowup,slot,payload,nowMs);
         const hour = new Date(nowMs + 9 * 3_600_000).getUTCHours();
@@ -70,6 +73,7 @@ export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
         const follower = await db.prepare('SELECT id,metadata FROM followers WHERE account_id=? AND igsid=?').bind(accountId,expectedRecipient).first<{id:number;metadata:string}>();
         if (!follower || await messagingEligibility(db,follower.id,accountId,nowMs)!=='eligible') throw new Error('Recruitment recipient is not eligible');
         if(operation.richTest){if(operation.richTest.followerId!==follower.id)throw Error('Rich test recipient changed');await assertRecruitmentRichTestReady(db,accountId,operation,operation.richTest,nowMs);}
+        if(operation.gateCta){if(operation.gateCta.followerId!==follower.id)throw Error('Gate CTA recipient changed');await assertGateCtaReady(db,accountId,operation,operation.gateCta,nowMs);}
         if(operation.gatePostback){if(operation.gatePostback.followerId!==follower.id)throw Error('Gate postback recipient changed');await assertGatePostbackReady(db,accountId,operation,operation.gatePostback,nowMs);}
         if(operation.gateFollowup){if(operation.gateFollowup.followerId!==follower.id)throw Error('Gate follow-up recipient changed');await assertGateFollowupReady(db,accountId,operation,operation.gateFollowup,nowMs);}
         if (operation.key.startsWith('step:')) await assertRecruitmentStepReady(db, accountId, follower.id, operation.key, operation.definitionVersion, operation.subjectVersion);

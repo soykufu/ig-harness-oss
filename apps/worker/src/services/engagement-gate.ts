@@ -1,3 +1,4 @@
+import {sendRecruitmentGateCta,type GateCtaContext,type GateCtaProof} from './recruitment-gate-cta.js';
 import {handleRecruitmentGatePostback,type GatePostbackProof} from './recruitment-gate-postback.js';
 import {gateFollowupKey,gateFollowupVersion,gateFollowupPayloadVersion,type GateFollowupProof} from './recruitment-gate-followup.js';
 import {wrapClickTracking} from './gate-click-tracking.js';
@@ -46,7 +47,7 @@ interface IgClientLike {
   postCommentToMedia(mediaId: string, message: string): Promise<unknown>;
 }
 
-type GateClientFactory=(key:string,definitionVersion?:string,subjectVersion?:string,proof?:GateFollowupProof,postback?:GatePostbackProof)=>Promise<IgClientLike>;
+type GateClientFactory=(key:string,definitionVersion?:string,subjectVersion?:string,proof?:GateFollowupProof,postback?:GatePostbackProof,cta?:GateCtaProof)=>Promise<IgClientLike>;
 
 interface FollowerRef {
   id: number;
@@ -149,18 +150,19 @@ export async function triggerGateForComment(
 export async function triggerGateForDmKeyword(
   db: D1Database,
   igClient: IgClientLike,
-  args: { text: string; follower: FollowerRef; igAccount?: IgAccountRef; accountId?: string },
+  args: { text: string; follower: FollowerRef; igAccount?: IgAccountRef; accountId?: string;ctaContext?:GateCtaContext },
 ): Promise<boolean> {
   const gates = await listEngagementGates(db, { activeOnly: true, accountId: args.accountId });
   for (const gate of gates) {
     if (gate.trigger_type !== 'dm_keyword') continue;
     if (!gate.trigger_keyword || !args.text.includes(gate.trigger_keyword)) continue;
 
+    if(args.ctaContext&&(args.ctaContext.accountId!==args.accountId||!/^(message|postback):[a-f0-9]{64}$/.test(args.ctaContext.eventKey)))throw Error('Verified CTA event required');
     const delivery = await createGateDelivery(db, {
       gate_id: gate.id,
       follower_id: args.follower.id,
       igsid: args.follower.igsid,
-      allow_repeat: gate.allow_repeat,
+      allow_repeat: gate.allow_repeat,source_event_key:args.ctaContext?.eventKey,
     });
 
     // Idempotent: only send the CTA on the very first trigger.
@@ -170,7 +172,8 @@ export async function triggerGateForDmKeyword(
       return true;
     }
 
-    await sendInitialCtaOnce(db,igClient,gate,delivery,args.igAccount);
+    if(args.ctaContext)await sendRecruitmentGateCta(db,gate,delivery,'keyword',args.ctaContext);
+    else await sendInitialCtaOnce(db,igClient,gate,delivery,args.igAccount);
     return true;
   }
   return false;
@@ -179,17 +182,18 @@ export async function triggerGateForDmKeyword(
 export async function triggerGateForStoryMention(
   db: D1Database,
   igClient: IgClientLike,
-  args: { follower: FollowerRef; igAccount?: IgAccountRef; accountId?: string },
+  args: { follower: FollowerRef; igAccount?: IgAccountRef; accountId?: string;ctaContext?:GateCtaContext },
 ): Promise<boolean> {
   const gates = await listEngagementGates(db, { activeOnly: true, accountId: args.accountId });
   for (const gate of gates) {
     if (gate.trigger_type !== 'story_mention') continue;
 
+    if(args.ctaContext&&(args.ctaContext.accountId!==args.accountId||!/^(message|postback):[a-f0-9]{64}$/.test(args.ctaContext.eventKey)))throw Error('Verified CTA event required');
     const delivery = await createGateDelivery(db, {
       gate_id: gate.id,
       follower_id: args.follower.id,
       igsid: args.follower.igsid,
-      allow_repeat: gate.allow_repeat,
+      allow_repeat: gate.allow_repeat,source_event_key:args.ctaContext?.eventKey,
     });
 
     // Idempotent: only send the CTA on the very first trigger.
@@ -199,7 +203,8 @@ export async function triggerGateForStoryMention(
       return true;
     }
 
-    await sendInitialCtaOnce(db,igClient,gate,delivery,args.igAccount);
+    if(args.ctaContext)await sendRecruitmentGateCta(db,gate,delivery,'story',args.ctaContext);
+    else await sendInitialCtaOnce(db,igClient,gate,delivery,args.igAccount);
     return true;
   }
   return false;
@@ -300,7 +305,7 @@ async function sendCtaDm(
   });
 }
 
-export async function resumeCommentGate(db: D1Database, client: IgClientLike, follower: FollowerRef, accountId: string, igAccount?: IgAccountRef): Promise<boolean> {
+export async function resumeCommentGate(db: D1Database, client: IgClientLike, follower: FollowerRef, accountId: string, igAccount?: IgAccountRef,ctaContext?:GateCtaContext): Promise<boolean> {
   if (await messagingEligibility(db,follower.id,accountId) !== 'eligible') return false;
   const delivery = await db.prepare(`SELECT d.* FROM gate_deliveries d JOIN engagement_gates g ON g.id=d.gate_id
     WHERE d.follower_id=? AND d.igsid=? AND g.account_id=? AND g.status='active' AND d.status='cta_sent'
@@ -309,6 +314,7 @@ export async function resumeCommentGate(db: D1Database, client: IgClientLike, fo
   if (!delivery) return false;
   const gate = await getEngagementGate(db,delivery.gate_id);
   if (!gate) return false;
+  if(ctaContext){await sendRecruitmentGateCta(db,gate,delivery,'comment_resume',ctaContext);return true;}
   const claimed = await db.prepare("UPDATE gate_deliveries SET metadata=json_set(metadata,'$.awaiting_reply',0,'$.cta_send_status','processing') WHERE id=? AND json_extract(metadata,'$.awaiting_reply')=1 RETURNING id").bind(delivery.id).first();
   if (!claimed) return true;
   try {

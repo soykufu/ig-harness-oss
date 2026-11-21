@@ -4,15 +4,25 @@
 
 soykufu-recruitment-policyのquestion/visit/interviewは、停止・辞退・不明送信を解除せず有人キューへ回し、案内取消し・自動加入なしを明示する。これは送信許可ではなく、実際の有人返信は別の認証済み一回契約が必要。30日コホートは既存の実登録/実来店証拠と人の実施確認の条件を維持し、同じevent IDのcandidate/kind/日時/根拠/有人確認/社内テスト指定が食い違えば入力順で捨てず照合待ちにする。不正な時刻・無限の観察窓・空白だけの根拠を計測へ含めない。11受入試験は合格。実台帳04・LINE登録・実見学/面接の接続と実績照合は未実施で、率向上の証明ではない。
 
+## CTAの固定操作ID・署名済み受信契約（2026-11-21・本番未適用）
+
+初回キーワード/ストーリーメンション/コメント私信後の実返信からのCTAを、`gate-cta:<delivery ID>`で固定した専用clientへ接続した。0040にevent/account/deliveryごとの一意receiptを追加し、source hash・定義/テンプレート/宛先・payload hash/予定通数・owner・claim時刻を保存する。既存の処理中署名済みmessaging行と実sender/本文またはstory attachmentを確認する。caption等の単なるmentionや送信echoをCTA根拠にしない。コメント再開は同じ私信のAPI acknowledgementと同じownerの台帳、私信後の実inboundを必須とする。
+
+claimは配信行の状態・元metadata・gate定義・担当・停止・削除lock・受信holdを同じbatchで照合し、一回だけ行う。SDKの各slot/fetch直前にも現source/定義/宛先/業務状態/受信hold/24h/送信窓/通数を再照合する。claim後の編集/相談/停止/受信行完了、部分送信、応答ID欠落、記録失敗はuncertainを保持し、新しいIDでやり直さない。強制モードのCTA失敗は、別scenarioやthank-you文面へfallthroughしない。
+
+明示repeat=1でも同じ受信イベントの配信行は決定的なIDで一行へ収束し、別の実受信イベントでは新しいrepeat行を作れる。旧履歴は書き換えず、旧unique indexは再作成しない。CTAボタンpayloadの往復から特典受付までソース上で接続試験した。LINE連携は未検証の間、生成/代替URLへの迂回なし。旧textがtemplate上限を超える場合は黙って欠落させずclaim前に保留する。旧CTAや旧private replyに証拠を後付けしない。
+
+0037〜0040・新送信モードは本番未適用。Meta/LINE/画面実機、旧台帳の実照合・率改善は未確認。配置停止/準備lock/追加flags無効・後続4通/20ルール無効を維持する。
+
 ## CTA初回の競合防止（2026-11-21・ソース準備のみ）
 
 非repeatのgate配信行は存在確認とINSERTを単一SQLへまとめ、16同時呼出しでも新規行は一件だけにする。旧repeat履歴は書き換えず、削除済みのunique indexも再作成しない。明示allow_repeat=1の動作は維持する。DMキーワード/メンションの初回CTAも配信行を一回claimし、12同時呼出しで一件だけ進む。失敗/完了記録失敗はcta_send_status=uncertainとoutcome_unknownを保持し、別の入力で勝手に再送しない。停止中は送らない。
 
-これは競合防止のみ。CTA初回/コメント受信再開の安定SDK操作ID・目的/文面/宛先/業務状態の最終照合・LINE受渡しはまだ未接続で、強制モードの送信許可ではない。本人認証/実機を含め未検証条件を残したまま有効化しない。本番設定や既存運用は変更していない。
+上記にSDK目的契約を追加したが、LINE受渡しやMeta実機は未検証のまま。競合防止だけを根拠に送信を許可しない。本人認証/実機を含め未検証条件を残したまま有効化しない。本番設定や既存運用は変更していない。
 
 ## 停止した配置のschema前提検査（2026-11-21・未実行）
 
-既存soykufu-deployスクリプトは、設定ファイル書込・秘密値作成・wrangler deployの前に、D1の停止1/接続account 0、全39移行ファイルの実hashと適用台帳の完全一致、最新schema/索引の実物を読取で確認する。余分な将来移行・不足・改変・途中の停止/適用台帳変更は拒否し、勝手に移行・修復・再配置しない。この検査はbackupVerified=false/deploymentAuthorized=falseを返し、配置の承認やバックアップ検証の代わりにはしない。
+既存soykufu-deployスクリプトは、設定ファイル書込・秘密値作成・wrangler deployの前に、D1の停止1/接続account 0、全40移行ファイルの実hashと適用台帳の完全一致、最新schema/索引の実物を読取で確認する。余分な将来移行・不足・改変・途中の停止/適用台帳変更は拒否し、勝手に移行・修復・再配置しない。この検査はbackupVerified=false/deploymentAuthorized=falseを返し、配置の承認やバックアップ検証の代わりにはしない。
 
 現DB/backup/既存配置とbindingの最新照合、本番migration/配置/変更結果は依然未実施。検査はローカルの合成DBで確認しただけで、正規GitHub Actions環境へも今回起動していない。秘密値は取得/表示していない。既存deploy workflow自体は変更していない（そのworkflowファイルをmainへpushすると自動配置が起動する設定があるため、今後も証拠照合前に触らない）。
 

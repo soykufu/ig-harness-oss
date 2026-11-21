@@ -205,7 +205,7 @@ export async function processQueuedWebhooks(db: D1Database, client: InstagramCli
     const ref = toIgAccountRef(account, env);
     if (event.kind === 'messaging' || event.kind === 'standby') await handleMessagingEvent(db, client, value, workerUrl, ref, account.id, event.kind === 'standby', recruitmentJobClientFactory(env, db, account),event.event_key);
     else if (event.kind === 'comments') await handleCommentEvent(db, client, value, account.ig_user_id, workerUrl, ref, account.id);
-    else if (event.kind === 'mentions') await handleMentionEvent(db, client, value, ref, account.id);
+    else if (event.kind === 'mentions') await handleMentionEvent(db, client, value, ref, account.id,event.event_key,recruitmentJobClientFactory(env,db,account),event.event_key);
     // B-15: live comments look like ordinary comment payloads — reuse that
     // pipeline (gate → rules → private reply). Requires the live_comments
     // app subscription and Advanced Access (要実機).
@@ -448,7 +448,7 @@ export async function handleMessagingEvent(
       return; // Don't process further
     }
 
-    if (accountId && await resumeCommentGate(db,igClient,{id:follower.id,igsid:senderId},accountId,igAccount)) return;
+    if (accountId && await resumeCommentGate(db,igClient,{id:follower.id,igsid:senderId},accountId,igAccount,clientForOperation?{accountId,eventKey:verifiedEventKey??'',clientFactory:clientForOperation}:undefined)) return;
 
     // Engagement gate DM keyword trigger
     try {
@@ -456,7 +456,7 @@ export async function handleMessagingEvent(
         text: incomingText,
         follower: { id: follower.id, igsid: senderId },
         igAccount,
-        accountId,
+        accountId,ctaContext:clientForOperation?{accountId:accountId??'',eventKey:verifiedEventKey??'',clientFactory:clientForOperation}:undefined,
       });
       if (triggered) {
         // Skip scenario triggers if gate fired
@@ -464,6 +464,7 @@ export async function handleMessagingEvent(
       }
     } catch (err) {
       console.error('DM keyword gate trigger failed:', err);
+      if(clientForOperation)throw err;
     }
 
     // Check dm_keyword scenario triggers
@@ -502,11 +503,11 @@ export async function handleMessagingEvent(
 
   if (event.message && !event.message.text && !event.message.quick_reply && !event.message.reply_to?.story) {
     await logMessage(db, { followerId: follower.id, direction: 'in', messageType: 'text', body: JSON.stringify({ text: '[attachment]' }), triggerSource: null });
-    if (accountId && await resumeCommentGate(db, igClient, { id: follower.id, igsid: senderId }, accountId, igAccount)) return;
+    if (accountId && await resumeCommentGate(db, igClient, { id: follower.id, igsid: senderId }, accountId, igAccount,clientForOperation?{accountId,eventKey:verifiedEventKey??'',clientFactory:clientForOperation}:undefined)) return;
   }
 
   if (event.message?.attachments?.some((attachment) => attachment.type === 'story_mention')) {
-    await handleMentionEvent(db, igClient, { mentioned_user_id: senderId }, igAccount, accountId);
+    await handleMentionEvent(db, igClient, { mentioned_user_id: senderId }, igAccount, accountId,undefined,clientForOperation,verifiedEventKey);
   }
 
   // Handle postback events
@@ -708,6 +709,8 @@ async function handleMentionEvent(
   igAccount?: IgAccountRef,
   accountId?: string,
   sourceEventId?: string,
+  clientForOperation?:NonNullable<ReturnType<typeof recruitmentJobClientFactory>>,
+  verifiedEventKey?:string,
 ): Promise<void> {
   // B-14: a comments/caption mention carries {media_id, comment_id} and no
   // sender. The content lives in the mentioned_comment / mentioned_media
@@ -755,11 +758,12 @@ async function handleMentionEvent(
     const triggered = await triggerGateForStoryMention(db, igClient, {
       follower: { id: follower.id, igsid: mentionerId },
       igAccount,
-      accountId,
+      accountId,ctaContext:clientForOperation?{accountId:accountId??'',eventKey:verifiedEventKey??'',clientFactory:clientForOperation}:undefined,
     });
     if (triggered) return;
   } catch (err) {
     console.error('Story mention gate trigger failed:', err);
+    if(clientForOperation)throw err;
   }
 
   // Send thank you DM (fallback when no gate matches)

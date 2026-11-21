@@ -304,9 +304,11 @@ export async function createGateDelivery(
      *  Migration 0013 dropped the unique index, so concurrent rows are
      *  allowed at the DB level. */
     allow_repeat?: number;
+    /** Verified inbound key pins repeat deliveries to the same source event. */
+    source_event_key?: string;
   },
 ): Promise<GateDelivery> {
-  const id = crypto.randomUUID();
+  const id=data.allow_repeat===1&&data.source_event_key?'event_'+Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([data.gate_id,data.follower_id,data.igsid,data.source_event_key]))))).map(b=>b.toString(16).padStart(2,'0')).join(''):crypto.randomUUID();
 
   // allow_repeat=1: always create a brand-new delivery so the same follower
   // can receive the CTA flow again. Used for demo / nurture campaigns.
@@ -314,7 +316,7 @@ export async function createGateDelivery(
     await db
       .prepare(
         `INSERT INTO gate_deliveries (id, gate_id, follower_id, igsid, metadata)
-         VALUES (?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
       )
       .bind(id, data.gate_id, data.follower_id, data.igsid, JSON.stringify(data.metadata ?? {}))
       .run();
@@ -322,7 +324,7 @@ export async function createGateDelivery(
       .prepare('SELECT * FROM gate_deliveries WHERE id = ?')
       .bind(id)
       .first<GateDelivery>();
-    if (!row) throw new Error('Failed to create gate delivery');
+    if (!row||row.gate_id!==data.gate_id||row.follower_id!==data.follower_id||row.igsid!==data.igsid) throw new Error('Failed to create gate delivery');
     return row;
   }
 

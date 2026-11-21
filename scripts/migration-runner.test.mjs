@@ -19,7 +19,7 @@ test('fresh install, second run, staff hashing and account ownership preservatio
   await applyMigrations(adapter(db));
   assert.match(db.prepare('SELECT api_key FROM staff_members').get().api_key, /^sha256:[a-f0-9]{64}$/);
   assert.equal(db.prepare('SELECT account_id FROM comment_rules').get().account_id, 'account-a');
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ig_schema_migrations').get().n, 39);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ig_schema_migrations').get().n, 40);
   db.close();
 });
 test('a failed file has no success marker and can resume without losing earlier migrations', async () => {
@@ -64,7 +64,7 @@ test('adopts legacy repeat-delivery history without recreating the removed uniqu
   await applyMigrations(adapter(db));
   assert.equal(db.prepare('SELECT COUNT(*) n FROM gate_deliveries').get().n, 2);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE name='uq_gate_deliveries_gate_follower'").get().n, 0);
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM ig_schema_migrations').get().n, 39);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM ig_schema_migrations').get().n, 40);
   db.close();
 });
 
@@ -137,4 +137,11 @@ for(const column of ['event_key','definition_version','payload_version','claimed
 });
 test('gate receipt uniqueness is verified independently of the migration completion ledger',async()=>{
  const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));db.exec('ALTER TABLE recruitment_gate_operations RENAME TO damaged_gate_operations');const cols=db.prepare('PRAGMA table_info(damaged_gate_operations)').all().map(c=>c.name+' '+c.type);db.exec('CREATE TABLE recruitment_gate_operations('+cols.join(',')+')');await assert.rejects(applyMigrations(adapter(db)),/gate operation uniqueness missing/);}finally{db.close();}
+});
+
+for(const column of ['event_key','source_hash','payload_version','expected_messages','owner_epoch'])test(`rejects missing CTA receipt ${column} despite a complete ledger`,async()=>{
+ const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));db.exec('ALTER TABLE recruitment_gate_cta_operations RENAME TO damaged_cta');const cols=db.prepare('PRAGMA table_info(damaged_cta)').all().filter(c=>c.name!==column).map(c=>c.name+' '+c.type);db.exec('CREATE TABLE recruitment_gate_cta_operations('+cols.join(',')+')');await assert.rejects(applyMigrations(adapter(db)),new RegExp('Schema verification failed: recruitment_gate_cta_operations.'+column));}finally{db.close();}
+});
+for(const missing of ['operation_key','event_key','delivery_id'])test(`verifies CTA uniqueness for ${missing} independently of the migration ledger`,async()=>{
+ const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));db.exec('ALTER TABLE recruitment_gate_cta_operations RENAME TO damaged_cta');const cols=db.prepare('PRAGMA table_info(damaged_cta)').all().map(c=>c.name+' '+c.type);for(const field of ['operation_key','event_key','delivery_id'])if(field!==missing)cols.push('UNIQUE(account_id,'+field+')');db.exec('CREATE TABLE recruitment_gate_cta_operations('+cols.join(',')+')');await assert.rejects(applyMigrations(adapter(db)),/CTA operation uniqueness missing/);}finally{db.close();}
 });
