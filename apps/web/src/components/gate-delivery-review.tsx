@@ -2,32 +2,34 @@
 import {useEffect,useRef,useState} from 'react'
 import {fetchApi,getApiAccountId} from '@/lib/api'
 import {useAccount} from '@/contexts/account-context'
-type Item={id:string;phase:string;state:string;recordedAt:string|null;expectedMessages:number|null;recordedMessages:number;apiAcknowledged:number;recordedSuccess:boolean;needsReview:boolean;mayRetry:false;recipientReceipt:'unknown';echoEvidence:string;deliveryState:string;endReason:string|null}
-type Review={followupHistoryScope?:'latest_claim_only'|'recorded_steps_and_legacy_latest';items:Item[];moreMayExist:boolean;mayRetry:false;recipientReceipt:'unknown'}
+import {gateReviewView,type GateReviewView} from '@/lib/gate-review-view'
 /** Read-only. A missing/failed history request never enables any send button. */
 export default function GateDeliveryReview({gateId}:{gateId:string}){
  const {selectedAccountId}=useAccount()
  const scope=JSON.stringify([selectedAccountId,gateId])
  const [ownerScope,setOwnerScope]=useState<string|null>(null)
- const [data,setData]=useState<{scope:string;review:Review}|null>(null)
+ const [data,setData]=useState<{scope:string;review:GateReviewView}|null>(null)
  const [error,setError]=useState(''),[busy,setBusy]=useState(false)
  const abort=useRef<AbortController|null>(null)
+ const reading=useRef(false)
  useEffect(()=>{
-  const ac=new AbortController();abort.current=ac;setOwnerScope(null);setData(null);setError('');setBusy(false)
+  const ac=new AbortController();abort.current=ac;reading.current=false;setOwnerScope(null);setData(null);setError('');setBusy(false)
   if(selectedAccountId)fetchApi<{success:boolean;data:{role:string}}>('/api/staff/me',{signal:ac.signal,cache:'no-store'}).then(r=>{if(!ac.signal.aborted&&getApiAccountId()===selectedAccountId&&r.success&&['owner','admin'].includes(r.data.role))setOwnerScope(scope)}).catch(()=>{})
   return()=>ac.abort()
  },[selectedAccountId,gateId,scope])
  if(!selectedAccountId||ownerScope!==scope)return null
  const check=async()=>{
-  const ac=abort.current;if(!ac||ac.signal.aborted||busy||getApiAccountId()!==selectedAccountId)return
+  const ac=abort.current;if(!ac||ac.signal.aborted||reading.current||getApiAccountId()!==selectedAccountId)return
+  reading.current=true
   setBusy(true);setData(null);setError('')
   try{
-   const r=await fetchApi<{success:boolean;data?:Review}>(`/api/engagement-gates/${encodeURIComponent(gateId)}/delivery-review`,{signal:ac.signal,cache:'no-store'})
+   const r=await fetchApi<{success:boolean;data?:unknown}>(`/api/engagement-gates/${encodeURIComponent(gateId)}/delivery-review`,{signal:ac.signal,cache:'no-store'})
    if(ac.signal.aborted||getApiAccountId()!==selectedAccountId)return
-   if(!r.success||!r.data||r.data.mayRetry!==false||r.data.recipientReceipt!=='unknown')throw Error('Unverified review')
-   setData({scope,review:r.data})
+   const review=gateReviewView(r.data)
+   if(!r.success||!review)throw Error('Unverified review')
+   setData({scope,review})
   }catch{if(!ac.signal.aborted&&getApiAccountId()===selectedAccountId)setError('記録を確認できませんでした。再送せず、後で再確認してください。')}
-  finally{if(!ac.signal.aborted&&getApiAccountId()===selectedAccountId)setBusy(false)}
+  finally{if(!ac.signal.aborted&&getApiAccountId()===selectedAccountId){reading.current=false;setBusy(false)}}
  }
  const review=data?.scope===scope?data.review:null
  return <section className="mt-8 rounded-xl border border-kumo-line bg-kumo-base p-5">
