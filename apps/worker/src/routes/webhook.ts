@@ -22,7 +22,7 @@ import { processSingleDelivery } from '../services/step-delivery.js';
 import { handleFollowCheckPostback, triggerGateForComment, triggerGateForDmKeyword, triggerGateForStoryMention, resumeCommentGate } from '../services/engagement-gate.js';
 import type { IgAccountRef } from '../services/line-cross-link.js';
 import { listIgAccounts, getIgAccountById } from '@ig-harness/db';
-import { ensureDefaultAccount, pickAccountForEntry, toIgAccountRef, getAccountClient, commentJobClientFactory, type AccountEnv } from '../lib/accounts.js';
+import { ensureDefaultAccount, pickAccountForEntry, toIgAccountRef, getAccountClient, commentJobClientFactory, recruitmentJobClientFactory, type AccountEnv } from '../lib/accounts.js';
 import { recordWebhookReceived, recordSignatureFailure, recordSignatureSuccess } from '../lib/health.js';
 import { queueWebhookEvents, drainWebhookEvents } from '../services/webhook-queue.js';
 import { hideCommentIfModerated } from '../lib/comment-moderation.js';
@@ -203,7 +203,7 @@ export async function processQueuedWebhooks(db: D1Database, client: InstagramCli
   await drainWebhookEvents(db, account.id, async (event) => {
     const value = JSON.parse(event.payload);
     const ref = toIgAccountRef(account, env);
-    if (event.kind === 'messaging' || event.kind === 'standby') await handleMessagingEvent(db, client, value, workerUrl, ref, account.id, event.kind === 'standby');
+    if (event.kind === 'messaging' || event.kind === 'standby') await handleMessagingEvent(db, client, value, workerUrl, ref, account.id, event.kind === 'standby', recruitmentJobClientFactory(env, db, account));
     else if (event.kind === 'comments') await handleCommentEvent(db, client, value, account.ig_user_id, workerUrl, ref, account.id);
     else if (event.kind === 'mentions') await handleMentionEvent(db, client, value, ref, account.id);
     // B-15: live comments look like ordinary comment payloads — reuse that
@@ -277,6 +277,7 @@ export async function handleMessagingEvent(
   igAccount?: IgAccountRef,
   accountId?: string,
   observeOnly = false,
+  clientForOperation?: (key: string, stepVersion?: string) => Promise<InstagramClient>,
 ): Promise<void> {
   const senderId = event.sender.id;
 
@@ -380,7 +381,7 @@ export async function handleMessagingEvent(
             const steps = await getScenarioSteps(db, scenario.id);
             const firstStep = steps[0];
             if (firstStep && firstStep.delay_minutes === 0 && friendScenario.status === 'active') {
-              await processSingleDelivery(db, igClient, { ...friendScenario, id: String(friendScenario.id), follower_id: String(friendScenario.follower_id), scenario_id: String(friendScenario.scenario_id) }, workerUrl, true);
+              await processSingleDelivery(db, igClient, { ...friendScenario, id: String(friendScenario.id), follower_id: String(friendScenario.follower_id), scenario_id: String(friendScenario.scenario_id) }, workerUrl, true, clientForOperation);
             }
           }
           break;
@@ -485,7 +486,7 @@ export async function handleMessagingEvent(
               const steps = await getScenarioSteps(db, scenario.id);
               const firstStep = steps[0];
               if (firstStep && firstStep.delay_minutes === 0 && friendScenario.status === 'active') {
-                await processSingleDelivery(db,igClient,{...friendScenario,id:String(friendScenario.id),follower_id:String(friendScenario.follower_id),scenario_id:String(friendScenario.scenario_id)},workerUrl,true);
+                await processSingleDelivery(db,igClient,{...friendScenario,id:String(friendScenario.id),follower_id:String(friendScenario.follower_id),scenario_id:String(friendScenario.scenario_id)},workerUrl,true,clientForOperation);
               }
             }
             break;

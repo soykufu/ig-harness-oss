@@ -1,3 +1,4 @@
+import {recruitmentStepVersion} from '../recruitment-step-version.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { InstagramClient } from '@ig-harness/ig-sdk';
 import { testDatabase } from '../../test-utils/d1.js';
@@ -15,8 +16,8 @@ async function fixture() {
   sqlite.prepare('UPDATE followers SET metadata=?').run(JSON.stringify({recruitment_delivery:{state:'active',owner_epoch:'epoch',observed_at_ms:NOON,valid_until_ms:NOON+300_000}}));
   const fetch=vi.fn(async()=>new Response(JSON.stringify({message_id:'message-'+fetch.mock.calls.length,recipient_id:'student'})));
   vi.stubGlobal('fetch',fetch);
-  const make=(mutate:()=>void|Promise<void>,key='operation')=>new InstagramClient({accessToken:'test',igUserId:'111',appSecret:'test-secret',
-    messageLifecycle:recruitmentMessageLifecycle(db,'a',{key,ownerEpoch:'epoch'},async()=>{if(locked)throw new Error('Preparation locked');},()=>now),
+  const make=(mutate:()=>void|Promise<void>,key='operation',stepVersion?:string)=>new InstagramClient({accessToken:'test',igUserId:'111',appSecret:'test-secret',
+    messageLifecycle:recruitmentMessageLifecycle(db,'a',{key,ownerEpoch:'epoch',stepVersion},async()=>{if(locked)throw new Error('Preparation locked');},()=>now),
     transformMessage:async(_id,message)=>{await Promise.resolve();await mutate();return message;},
   });
   return {sqlite,db,fetch,make,setNow:(n:number)=>{now=n;},lock:()=>{locked=true;}};
@@ -129,11 +130,16 @@ it.each(['valid','wrong-follower','wrong-igsid','dropped','delivered','ended','i
  else {await expect(send).rejects.toThrow();expect(fetch).not.toHaveBeenCalled();}
 });
 
-it.each(['valid','completed','paused-scenario','wrong-account','wrong-follower','claim-lost','advanced','step-deleted','reordered','condition-follow','condition-unknown','condition-missing'])(
+it.each(['valid','completed','paused-scenario','wrong-account','wrong-follower','claim-lost','advanced','step-deleted','reordered','condition-follow','condition-unknown','condition-missing','body-edit','type-edit','delay-edit','fallback-edit','version-missing'])(
  'checks scheduled step %s after asynchronous message preparation',async change=>{
  const {sqlite,fetch,make}=await fixture();
  sqlite.exec("INSERT INTO scenarios(id,name,trigger_type,account_id) VALUES(1,'test','manual','a'); INSERT INTO scenario_steps(id,scenario_id,step_order,delay_minutes,message_type,body) VALUES(1,1,1,0,'text','{}'); INSERT INTO follower_scenarios(id,follower_id,scenario_id,current_step,status,next_step_at,end_reason) VALUES(1,1,1,0,'active',NULL,'delivery_in_progress')");
+ const version=await recruitmentStepVersion(sqlite.prepare('SELECT * FROM scenario_steps WHERE id=1').get() as any);
  const mutate=()=>{
+  if(change==='body-edit')sqlite.exec("UPDATE scenario_steps SET body='changed'");
+  if(change==='type-edit')sqlite.exec("UPDATE scenario_steps SET message_type='image'");
+  if(change==='delay-edit')sqlite.exec('UPDATE scenario_steps SET delay_minutes=5');
+  if(change==='fallback-edit')sqlite.exec('UPDATE scenario_steps SET next_step_on_false=99');
   if(change==='completed')sqlite.exec("UPDATE follower_scenarios SET status='completed'");
   if(change==='paused-scenario')sqlite.exec('UPDATE scenarios SET is_active=0');
   if(change==='wrong-account'){sqlite.exec("INSERT INTO ig_accounts(id,ig_user_id,access_token,created_at,updated_at) VALUES('b','222','test','2026-01-01','2026-01-01'); UPDATE scenarios SET account_id='b'");}
@@ -146,7 +152,7 @@ it.each(['valid','completed','paused-scenario','wrong-account','wrong-follower',
   if(change==='condition-missing')sqlite.exec("UPDATE scenario_steps SET condition_type='tag_exists',condition_value=NULL");
   if(change==='reordered')sqlite.exec("UPDATE scenario_steps SET step_order=2; INSERT INTO scenario_steps(id,scenario_id,step_order,delay_minutes,message_type,body) VALUES(2,1,1,0,'text','{}')");
  };
- const send=make(mutate,'step:1:1').sendText('student','test');
+ const send=make(mutate,'step:1:1',change==='version-missing'?undefined:version).sendText('student','test');
  if(change==='valid'){await send;expect(fetch).toHaveBeenCalledOnce();}
  else{await expect(send).rejects.toThrow();expect(fetch).not.toHaveBeenCalled();}
 });

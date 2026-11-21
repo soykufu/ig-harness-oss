@@ -1,3 +1,4 @@
+import { recruitmentStepVersion } from './recruitment-step-version.js';
 import { messagingEligibility } from './messaging-window.js';
 import {
   getFriendScenariosDueForDelivery,
@@ -44,7 +45,7 @@ export async function processStepDeliveries(
   igClient: InstagramClient,
   workerUrl?: string,
   accountId?: string,
-  clientForOperation?: (key: string) => Promise<InstagramClient>,
+  clientForOperation?: (key: string, stepVersion?: string) => Promise<InstagramClient>,
 ): Promise<void> {
   const now = jstNow();
   // Operator stop switch: due steps stay scheduled, resume after unpausing.
@@ -79,7 +80,7 @@ export async function processSingleDelivery(
   },
   _workerUrl?: string,
   immediate = false,
-  clientForOperation?: (key: string) => Promise<InstagramClient>,
+  clientForOperation?: (key: string, stepVersion?: string) => Promise<InstagramClient>,
 ): Promise<void> {
   const friend = await getFriendById(db, fs.follower_id);
   if (!friend) {
@@ -149,7 +150,7 @@ export async function processSingleDelivery(
   const claim = await db.prepare("UPDATE follower_scenarios SET next_step_at=NULL,end_reason='delivery_in_progress' WHERE id=? AND status='active' AND current_step=? AND next_step_at IS ? RETURNING id").bind(fs.id,fs.current_step,fs.next_step_at).first();
   if (!claim) return;
   try {
-    const sender = clientForOperation ? await clientForOperation(`step:${fs.id}:${currentStep.id}`) : igClient;
+    const sender = clientForOperation ? await clientForOperation(`step:${fs.id}:${currentStep.id}`, await recruitmentStepVersion(currentStep)) : igClient;
     await sendIgMessage(sender, igsid, currentStep.message_type, parsed);
   }
   catch (error) {
