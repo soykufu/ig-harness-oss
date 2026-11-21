@@ -18,6 +18,7 @@ async function fixture(ready=true,gate=false,mode:'thread'|'mention'='thread'){
   f.sqlite.prepare("UPDATE comment_rule_jobs SET status='sent',started_at=?,finished_at=?,attempt_count=1").run(new Date(NOW).toISOString(),new Date(NOW).toISOString());
   f.sqlite.prepare("INSERT INTO private_reply_attempts VALUES('a','c1',1,'sent',?,'dm-mid',NULL,NULL)").run(new Date(NOW).toISOString());
   f.sqlite.prepare("INSERT INTO recruitment_outbound_operations VALUES('a','comment:a:c1:r:0','epoch',?,'sent','dm-mid')").run(NOW);
+  f.sqlite.prepare("INSERT INTO recruitment_outbound_observations VALUES('a','dm-mid',?,?)").run(NOW,NOW);
  }
  const plan=f.sqlite.prepare('SELECT j.*,f.igsid FROM comment_rule_jobs j JOIN followers f ON f.id=j.follower_id').get() as any;
  const version=await recruitmentPublicReplyVersion('a',plan);
@@ -93,4 +94,22 @@ it.each(['processing','uncertain'])('holds new and already reserved DMs while pu
 it('persists the claimed immutable plan and owner evidence without changing a historical reply',async()=>{
  const f=await fixture();await f.claim();expect(f.sqlite.prepare('SELECT public_reply_plan_hash,public_reply_owner_epoch,public_reply_claimed_at FROM comment_rule_jobs').get()).toEqual({public_reply_plan_hash:f.version,public_reply_owner_epoch:'epoch',public_reply_claimed_at:new Date(NOW).toISOString()});
  f.sqlite.exec("UPDATE comment_rule_jobs SET public_reply_status='sent',public_reply_id='ack'");await expect(f.claim()).rejects.toThrow();expect(f.sqlite.prepare('SELECT public_reply_id FROM comment_rule_jobs').get()?.public_reply_id).toBe('ack');
+});
+
+for(const table of ['recruitment_gate_operations','recruitment_gate_cta_operations','recruitment_gate_followup_operations'])it.each(['stale','future','other-owner','uncertain','fresh','settled'])(`public reply rechecks ${table} %s at claim and final SDK boundary`,async mode=>{
+ const blocked=!['fresh','settled'].includes(mode);
+ for(const stage of ['claim','transport']){
+  const f=await fixture(true,true);const operation=stage==='transport'?await f.claim():null;
+  const row={account_id:'a',operation_key:'other-purpose',delivery_id:'d',follower_id:1,definition_version:'d'.repeat(64),owner_epoch:mode==='other-owner'?'other':'epoch',claimed_at_ms:mode==='stale'?NOW-60000:mode==='future'?NOW+1:NOW,state:mode==='settled'?'sent':mode==='uncertain'?'uncertain':'claimed',...(table==='recruitment_gate_operations'?{event_key:'event',phase:'reward',loop_count:0}:table==='recruitment_gate_cta_operations'?{event_key:'event',mode:'keyword',source_hash:'s'.repeat(64),payload_version:'p'.repeat(64),expected_messages:1}:{step_index:0})};
+  f.sqlite.prepare(`INSERT INTO ${table}(${Object.keys(row).join(',')}) VALUES(${Object.keys(row).map(()=>'?').join(',')})`).run(...Object.values(row));
+  if(stage==='claim'){if(blocked)await expect(f.claim()).rejects.toThrow('reconciliation');else await f.claim();}
+  else{const fetch=vi.fn(async()=>new Response(JSON.stringify({id:'public'})));vi.stubGlobal('fetch',fetch);const client=new InstagramClient({accessToken:'test',igUserId:'111',beforeMutation:req=>assertRecruitmentPublicReplyReady(f.db,'a',operation!,req,NOW)});if(blocked){await expect(client.replyToComment('c1',f.plan.reply_text)).rejects.toThrow('reconciliation');expect(fetch).not.toHaveBeenCalled();}else{await client.replyToComment('c1',f.plan.reply_text);expect(fetch).toHaveBeenCalledOnce();}}
+  expect(f.sqlite.prepare(`SELECT state FROM ${table}`).get()?.state).toBe(row.state);
+ }
+});
+it.each(['missing-observation','stale-slot','future-slot','future-observation','unknown-delivery'])('holds public reply for %s before and after claiming',async mode=>{
+ for(const stage of ['claim','transport']){const f=await fixture(true,true);const op=stage==='transport'?await f.claim():null;
+ if(mode==='missing-observation')f.sqlite.exec('DELETE FROM recruitment_outbound_observations');if(mode==='stale-slot'||mode==='future-slot')f.sqlite.prepare("INSERT INTO recruitment_outbound_operations VALUES('a','other','epoch',?,'reserved',NULL)").run(mode==='stale-slot'?NOW-60000:NOW+1);if(mode==='future-observation')f.sqlite.prepare("INSERT INTO recruitment_outbound_observations VALUES('a','future',?,?)").run(NOW+1,NOW+1);if(mode==='unknown-delivery')f.sqlite.exec("UPDATE gate_deliveries SET end_reason='outcome_unknown'");
+ if(stage==='claim')await expect(f.claim()).rejects.toThrow('reconciliation');else await expect(assertRecruitmentPublicReplyReady(f.db,'a',op!,{method:'POST',path:'/c1/replies?message='+encodeURIComponent(f.plan.reply_text),body:undefined},NOW)).rejects.toThrow('reconciliation');
+ }
 });

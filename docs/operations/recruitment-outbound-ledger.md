@@ -1,3 +1,7 @@
+## 最新の実証と保留（2026-11-21 19:38:30 JST）
+
+正規読取smoke44895296381成功。DB停止1/IG接続0/求職者0、移行27hash一致・ソース41に対し0028〜0041の14件不足（改変/将来/重複0）。配信中同一単一版の指定D1/R2 binding、準備lock1、追加3flags無効を確認。Time Travel bookmarkは取得可。schemaReady=false、復元未試験のためbackupVerified=false、deploymentAuthorized=false。ソース修正/CI成功と本番適用・実機受信・実見学/採用率改善を区別する。
+
 # 採用DM共通台帳の組込み条件
 
 ## 承認文面を切らないtemplate準備（2026-11-21・本番未適用）
@@ -65,17 +69,17 @@ claimは配信行の状態・元metadata・gate定義・担当・停止・削除
 
 上記にSDK目的契約を追加したが、LINE受渡しやMeta実機は未検証のまま。競合防止だけを根拠に送信を許可しない。本人認証/実機を含め未検証条件を残したまま有効化しない。本番設定や既存運用は変更していない。
 
-## 停止した配置のschema前提検査（2026-11-21・未実行）
+## 停止した配置のschema前提検査（2026-11-21・正規読取実行済み、配置未実行）
 
-既存soykufu-deployスクリプトは、設定ファイル書込・秘密値作成・wrangler deployの前に、D1の停止1/接続account 0、全40移行ファイルの実hashと適用台帳の完全一致、最新schema/索引の実物を読取で確認する。余分な将来移行・不足・改変・途中の停止/適用台帳変更は拒否し、勝手に移行・修復・再配置しない。この検査はbackupVerified=false/deploymentAuthorized=falseを返し、配置の承認やバックアップ検証の代わりにはしない。
+既存soykufu-deployスクリプトは、設定ファイル書込・秘密値作成・wrangler deployの前に、D1の停止1/接続account 0、全ソース移行ファイル（現在41件）の実hashと適用台帳の完全一致、最新schema/索引の実物を読取で確認する。余分な将来移行・不足・改変・途中の停止/適用台帳変更は拒否し、勝手に移行・修復・再配置しない。この検査はbackupVerified=false/deploymentAuthorized=falseを返し、配置の承認やバックアップ検証の代わりにはしない。
 
-現DB/backup/既存配置とbindingの最新照合、本番migration/配置/変更結果は依然未実施。検査はローカルの合成DBで確認しただけで、正規GitHub Actions環境へも今回起動していない。秘密値は取得/表示していない。既存deploy workflow自体は変更していない（そのworkflowファイルをmainへpushすると自動配置が起動する設定があるため、今後も証拠照合前に触らない）。
+19:38:30 JSTの正規smoke44895296381で、現DB停止1/接続0/求職者0・27hash一致/14件不足・配信中同一版binding/準備lock1/追加flags無効を読取照合済み。schemaReady=false。Time Travel bookmarkは取得可能だが復元未試験でbackupVerified=false/deploymentAuthorized=false、本番migration/配置/変更後検証は未実施。秘密値は取得/表示していない。既存deploy workflow自体は変更していない（そのworkflowファイルをmainへpushすると自動配置が起動する設定があるため、今後も証拠照合前に触らない）。
 
 ## 特典/フォロー確認の読取レビュー（2026-11-21・ソース準備のみ）
 
 owner/adminだけがcampaign詳細から送信記録をGETで確認できる。account/gateの所有範囲を照合し、停止・準備ロック下でもDB読取だけを行い、Meta呼出し・再送・停止解除・受信保留解除を行わない。0039で今後のreceiptへ予定メッセージ数を保存する。旧receiptはNULLのまま、数を推定して成功にしない。全ての予定slot番号/同じowner/API acknowledgement/観測台帳とreceipt stateが一致した場合だけAPI受付の記録として表示し、業務側outcome_unknownは別に照合待ちを維持する。signed echoがあっても閲覧状況はunknown、mayRetryは常にfalse。空の履歴・404・schema欠落503も再送許可ではない。
 
-画面は確認ボタンで最大50件だけを読み、別accountの古い応答を表示しない。本文・送信先IGSID・event key・Meta message ID・秘密値は返さない。receipt保存前に失敗した配信行の処理中/不明markerも照合待ちとして表示する。CTAと公開コメント返信を同画面へ接続済み。公開job識別子はhash化する。後続はmetadataに残る最新claimだけを表示し、旧claimのowner欠落を推定で補わない。全後続stepの不変receipt/履歴保存は別残件。この画面のブラウザ実機表示・タップは未検証で、本番配置前の確認が必要。
+画面は確認ボタンで最大50件だけを読み、別accountの古い応答を表示しない。本文・送信先IGSID・event key・Meta message ID・秘密値は返さない。receipt保存前に失敗した配信行の処理中/不明markerも照合待ちとして表示する。CTAと公開コメント返信を同画面へ接続済み。公開job識別子はhash化する。0041以降の後続は全stepの不変receiptを表示し、receiptの無い旧metadataは最新claimだけ別表示する。旧owner欠落を推定で補わず、旧全履歴を復元したとは扱わない。この画面のブラウザ実機表示・タップは未検証で、本番配置前の確認が必要。
 
 ## Gateボタン返信の固定ID・受信根拠（2026-11-21・ソース準備のみ）
 
@@ -155,7 +159,7 @@ Webhookのecho専用取込は後述の明示設定でのみ有効になり、現
 
 ローカルSQLiteの同時25予約テストでは10件だけが成功しました。Cloudflare上の複数実行環境での競合試験、Meta実機試験は未実施です。ネイティブアプリの手動送信自体をこの台帳から止めることはできません。
 
-## 次の組込み手順（送信停止を維持したまま）
+## ソース実装済み機能と残る実機受入（送信停止を維持）
 
 ### 追加した署名済echo取込（未配置・設定無効）
 
@@ -189,13 +193,13 @@ Webhookのecho専用取込は後述の明示設定でのみ有効になり、現
 
 SDKはtracking変換・リンク生成・appsecret proof・本文シリアライズが終わった後、実fetch直前に `beforeFetch` を呼びます。この段階でも停止/準備ロック、8〜21時、IGアカウント有効、所有権epoch、照合/予約の鮮度、削除ロック、不明操作、手動送信を含む通数を再確認します。通常DMは対象アカウントのIGSIDに一致する既存followerを照合し、standby/最終受信24h外/未来の受信日時/削除済みも拒否します。送信echoを最終受信へ変換することはありません。
 
-変換待ち中の条件変化で拒否した予約も、現段階では自動解放せず保守的にuncertainへ保留します。この状態を実送信が起きた証拠とは扱いません。private replyはcomment ID宛なので通常24h確認から分け、コメント期限/一度限り制約の最終再照合は別の接続残件です。相談/辞退/同意の業務状態と各入口の安定キーも未接続のままです。
+変換待ち中の条件変化で拒否した予約も、現段階では自動解放せず保守的にuncertainへ保留します。この状態を実送信が起きた証拠とは扱いません。private replyはcomment ID宛なので通常24h確認から分け、コメント期限/一度限り制約・相談/辞退/同意の状態と主要入口の安定キーをソースで再照合します。form本人署名/公開mentionの目的は未接続です。
 
 `RECRUITMENT_LEDGER_ENFORCEMENT=1` のときだけ、`getAccountClient` はSDKのメッセージ送信境界にライフサイクル処理を組み込みます。操作キー/所有権epochを指定しない既存経路は送信不可です。各実メッセージで停止/8〜21時/所有権/鮮度/原子的枠確保→送信→送信ID/宛先照合を行います。richの各パーツは別枠です。送信ID不明、通信切断、宛先不一致、成功記録失敗は不明状態として止め、新しい操作にも進ませません。再試行用に別の操作キーを作ることは禁止です。
 
 このモードでは枠確保前に既読/入力中を出さないため、presence装飾を適用しません。送信後のSDK観測コールバックとは異なり、台帳の成功記録失敗は黙殺しません。予約/不明操作が残る間は正式な事業アカウント削除も保留します。
 
-既存のbroadcast/シナリオ/手動送信等の各入口には、安定した操作キーと業務の停止/同意/24h/private reply条件の接続が残ります。このフラグを有効にするだけで既存配信が利用可能になるわけではありません。現在の送信停止1/準備ロック1/フラグ未設定を維持します。
+broadcast/シナリオ/手動送信/主要gate/commentの安定操作キーと停止/同意/24h/private reply条件はソースへ接続済みです。form回答者本人性や公開mention等は根拠不足のまま保留します。このフラグを有効にするだけで既存配信が利用可能になるわけではありません。現在の送信停止1/準備ロック1/フラグ未設定を維持します。
 
 全送信経路への組込み、実Meta echoの検証、旧台帳移行、署名付きIG→LINE受渡しの実機確認は残っています。
 この追加だけを「手動を含む本番通数制御完成」や「見学率向上」とは扱いません。
@@ -283,3 +287,7 @@ An interrupted gate purpose can retain `claimed` before any SDK slot is reserved
 The existing smoke workflow performs allowlisted GET requests inside the official Actions runner: current active deployment, that exact version's binding metadata, a second deployment read, and the dedicated D1 Time Travel bookmark. A split rollout, changed deployment, missing/duplicate/wrong binding, non-plain or missing preparation lock, or unknown/enabled optional flag remains unverified. Raw API results, binding values, credentials and errors are never logged. Only booleans and safe fingerprints leave the reader. Permission failures are not retried or bypassed. The stopped/unconnected/empty D1 is checked again after metadata reads.
 
 The bookmark proves availability of a recovery reference, not a restore-tested/exported backup; `backupVerified=false` and `deploymentAuthorized=false` remain unconditional. Existing schema gaps still forbid migration/deployment. Documentation used: [active deployments](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/list/), [specific version metadata](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/versions/methods/get/), [bookmark read](https://developers.cloudflare.com/api/resources/d1/subresources/database/subresources/time_travel/methods/get_bookmark/). No settings PATCH, secret read endpoint, restore, export or deployment is called.
+
+### Public reply account-wide reconciliation (2026-11-21)
+
+The existing acknowledged-private-reply public-comment purpose also rechecks abandoned/future/old-owner/uncertain gate claims, stale or future SDK slots, future outgoing observations and any account gate outcome-unknown marker. Its private acknowledgement must have its durable matching observation. These conditions apply both to the atomic public claim and the final signed SDK mutation. Public replies still consume no second DM slot. This does not activate caption/comment mentions without a separately verified sender/purpose, and does not release a stop, receipt or inbound hold.

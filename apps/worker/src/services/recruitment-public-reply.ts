@@ -26,12 +26,18 @@ const READY=`SELECT j.*,f.igsid,f.metadata,c.owner_epoch FROM comment_rule_jobs 
  AND ((j.status='sent' AND j.delivery_mode='private_reply' AND j.message_type='text') OR (j.status='pending' AND j.delivery_mode='awaiting_inbound' AND j.message_type!='text'))
  AND EXISTS(SELECT 1 FROM integration_settings WHERE key='outbound_paused' AND value='0')
  AND NOT EXISTS(SELECT 1 FROM data_deletion_locks WHERE account_id=j.account_id)
- AND NOT EXISTS(SELECT 1 FROM recruitment_outbound_operations WHERE account_id=j.account_id AND state='uncertain')
+ AND EXISTS(SELECT 1 FROM recruitment_outbound_observations e WHERE e.account_id=o.account_id AND e.message_id=o.message_id)
+ AND NOT EXISTS(SELECT 1 FROM recruitment_outbound_operations WHERE account_id=j.account_id AND (state='uncertain' OR reserved_at_ms>? OR (state='reserved' AND reserved_at_ms<=?)))
+ AND NOT EXISTS(SELECT 1 FROM recruitment_outbound_observations WHERE account_id=j.account_id AND sent_at_ms>?)
+ AND NOT EXISTS(SELECT 1 FROM recruitment_gate_operations WHERE account_id=j.account_id AND (state='uncertain' OR (state='claimed' AND (claimed_at_ms<=? OR claimed_at_ms>? OR owner_epoch!=c.owner_epoch))))
+ AND NOT EXISTS(SELECT 1 FROM recruitment_gate_cta_operations WHERE account_id=j.account_id AND (state='uncertain' OR (state='claimed' AND (claimed_at_ms<=? OR claimed_at_ms>? OR owner_epoch!=c.owner_epoch))))
+ AND NOT EXISTS(SELECT 1 FROM recruitment_gate_followup_operations WHERE account_id=j.account_id AND (state='uncertain' OR (state='claimed' AND (claimed_at_ms<=? OR claimed_at_ms>? OR owner_epoch!=c.owner_epoch))))
+ AND NOT EXISTS(SELECT 1 FROM gate_deliveries d JOIN engagement_gates g ON g.id=d.gate_id WHERE g.account_id=j.account_id AND d.end_reason='outcome_unknown')
  AND NOT EXISTS(SELECT 1 FROM comment_rule_jobs x WHERE x.account_id=j.account_id AND x.id!=j.id AND x.public_reply_status IN ('processing','uncertain'))
  AND (j.gate_delivery_id IS NULL OR EXISTS(SELECT 1 FROM gate_deliveries d JOIN engagement_gates g ON g.id=d.gate_id WHERE d.id=j.gate_delivery_id AND g.account_id=j.account_id AND g.status='active' AND d.follower_id=j.follower_id AND d.igsid=f.igsid AND d.status='cta_sent' AND d.end_reason IS NULL))`;
 function bindings(accountId:string,jobId:string,status:string|null,now:number){
  const earlier=new Date(now-60000).toISOString(),at=new Date(now).toISOString();
- return[accountId,jobId,status,now-60000,now,earlier,at,earlier,at,earlier,at,at,at];
+ return[accountId,jobId,status,now-60000,now,earlier,at,earlier,at,earlier,at,at,at,now,now-60000,now,now-60000,now,now-60000,now,now-60000,now];
 }
 async function state(db:D1Database,accountId:string,jobId:string,status:string|null,now:number){
  const row=await db.prepare(READY).bind(...bindings(accountId,jobId,status,now)).first<Ready>();
