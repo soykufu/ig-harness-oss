@@ -20,15 +20,16 @@ it('uses one durable action and two slots for concurrent taps, with no duplicate
  expect(f.fetch).toHaveBeenCalledTimes(2);expect(f.sqlite.prepare('SELECT COUNT(*) n FROM recruitment_manual_intents').get()?.n).toBe(1);expect(f.sqlite.prepare('SELECT COUNT(*) n FROM recruitment_outbound_operations').get()?.n).toBe(2);
  const replay=await f.post();expect(replay.status).toBe(200);expect(await replay.json()).toMatchObject({data:{replayed:true,sent_blocks:2,recipientReceipt:'unknown'}});expect(f.fetch).toHaveBeenCalledTimes(2);
 });
-it.each(['role','db-role','inactive','nonce','template-precondition','foreign-template','paused','preparation-lock','standby','expired','timeout','wrong-ack','changed-template','missing-slot'])( 'holds rich test operation for %s evidence',async mode=>{
+it.each(['role','db-role','inactive','nonce','template-precondition','foreign-template','unowned-template','bad-context','paused','preparation-lock','standby','expired','timeout','wrong-ack','changed-template','missing-slot'])( 'holds rich test operation for %s evidence',async mode=>{
  const f=await fixture();
  if(mode==='role')f.setRole('staff');if(mode==='db-role')f.sqlite.exec("UPDATE staff_members SET role='staff'");if(mode==='inactive')f.sqlite.exec('UPDATE staff_members SET is_active=0');
+ if(mode==='unowned-template')f.sqlite.exec('UPDATE rich_messages SET account_id=NULL');
  if(mode==='foreign-template')f.sqlite.exec("UPDATE rich_messages SET account_id='b'");if(mode==='paused')f.sqlite.exec("UPDATE integration_settings SET value='1'");if(mode==='preparation-lock')f.env.OUTBOUND_PREPARATION_LOCK='1';
  if(mode==='standby')f.sqlite.exec("UPDATE followers SET messaging_owner='standby'");if(mode==='expired')f.sqlite.prepare('UPDATE followers SET last_inbound_at=?').run(new Date(NOW-86400001).toISOString());
  if(mode==='timeout')f.fetch.mockRejectedValue(new Error('timeout'));if(mode==='wrong-ack')f.fetch.mockResolvedValue(new Response(JSON.stringify({message_id:'wrong',recipient_id:'foreign'})));
  if(mode==='changed-template')f.fetch.mockImplementation(async()=>{f.sqlite.prepare('UPDATE rich_messages SET blocks=?').run(JSON.stringify([{type:'text',text:'changed'},{type:'text',text:'changed2'}]));return new Response(JSON.stringify({message_id:'first',recipient_id:'student'}));});
  if(mode==='missing-slot'){expect((await f.post()).status).toBe(200);f.sqlite.exec("DELETE FROM recruitment_outbound_operations WHERE operation_key LIKE '%:1'");}
- const res=await f.post(mode==='nonce'?'':undefined,mode==='template-precondition'?{to_igsid:'student',template_version:'0'.repeat(64)}:undefined);expect(res.status).not.toBe(200);
+ const res=await f.post(mode==='nonce'?'':undefined,mode==='template-precondition'?{to_igsid:'student',template_version:'0'.repeat(64)}:mode==='bad-context'?{to_igsid:'student',reward_url:{url:'wrong'}}:undefined);expect(res.status).not.toBe(200);
  const expected=['timeout','wrong-ack','changed-template'].includes(mode)?1:mode==='missing-slot'?2:0;expect(f.fetch).toHaveBeenCalledTimes(expected);
- const count=f.fetch.mock.calls.length;expect((await f.post(mode==='nonce'?'':undefined,mode==='template-precondition'?{to_igsid:'student',template_version:'0'.repeat(64)}:undefined)).status).not.toBe(200);expect(f.fetch).toHaveBeenCalledTimes(count);
+ const count=f.fetch.mock.calls.length;expect((await f.post(mode==='nonce'?'':undefined,mode==='template-precondition'?{to_igsid:'student',template_version:'0'.repeat(64)}:mode==='bad-context'?{to_igsid:'student',reward_url:{url:'wrong'}}:undefined)).status).not.toBe(200);expect(f.fetch).toHaveBeenCalledTimes(count);
 });

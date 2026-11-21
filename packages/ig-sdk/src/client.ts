@@ -74,11 +74,12 @@ export class InstagramClient {
   private onResponse?: (observation: GraphObservation) => Promise<void> | void;
   private appSecret?: string;
   private beforeRequest?: () => Promise<void> | void;
+  private beforeMutation?: (request:{method:string;path:string;body:unknown})=>Promise<void>|void;
   private messageLifecycle?: MessageLifecycle;
 
   private transformMessage?: (recipientId: string, message: unknown, recipient: { id?: string; comment_id?: string }) => Promise<unknown>;
 
-  constructor(opts: { messageLifecycle?: MessageLifecycle; connectionType?: IgConnectionType; pageId?: string | null; transformMessage?: (recipientId: string, message: unknown, recipient: { id?: string; comment_id?: string }) => Promise<unknown>; accessToken: string; igUserId: string; apiVersion?: string; timeoutMs?: number; maxReadRetries?: number; appSecret?: string; beforeRequest?: () => Promise<void> | void; onResponse?: (observation: GraphObservation) => Promise<void> | void }) {
+  constructor(opts: { beforeMutation?: (request:{method:string;path:string;body:unknown})=>Promise<void>|void; messageLifecycle?: MessageLifecycle; connectionType?: IgConnectionType; pageId?: string | null; transformMessage?: (recipientId: string, message: unknown, recipient: { id?: string; comment_id?: string }) => Promise<unknown>; accessToken: string; igUserId: string; apiVersion?: string; timeoutMs?: number; maxReadRetries?: number; appSecret?: string; beforeRequest?: () => Promise<void> | void; onResponse?: (observation: GraphObservation) => Promise<void> | void }) {
     this.accessToken = opts.accessToken;
     this.messageLifecycle = opts.messageLifecycle;
     this.transformMessage = opts.transformMessage;
@@ -87,6 +88,7 @@ export class InstagramClient {
     this.appSecret = opts.appSecret;
     this.onResponse = opts.onResponse;
     this.beforeRequest = opts.beforeRequest;
+    this.beforeMutation = opts.beforeMutation;
     this.connectionType = opts.connectionType ?? 'instagram_login';
     if (!IG_CONNECTION_TYPES.includes(this.connectionType)) throw new Error('Invalid connection type');
     this.pageId = opts.pageId || undefined;
@@ -138,6 +140,7 @@ export class InstagramClient {
     for (let attempt = 0; ; attempt++) {
       // All asynchronous transformation/signing work and serialization has
       // finished. A rejected final admission must never reach fetch.
+      if(!['GET','HEAD','OPTIONS'].includes(method))await this.beforeMutation?.({method,path,body});
       await beforeFetch?.();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);

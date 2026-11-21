@@ -15,7 +15,7 @@ import {
   findGatesUsingRichMessage,
   hasCheckFollowPostback,
 } from '@ig-harness/db';
-import type { RichMessageKind } from '@ig-harness/db';
+import type { RichMessageKind,IgAccount } from '@ig-harness/db';
 import type { RichMessageBlock } from '@ig-harness/ig-sdk';
 import { resolveAccount, getAccountClient } from '../lib/accounts.js';
 import type { Env } from '../index.js';
@@ -247,13 +247,16 @@ richMessages.post('/api/rich-messages/:id/test-send', requireRole('owner','admin
   try {
   const id = c.req.param('id')??'';
   const body = await c.req.json<{ to_igsid?: string; reward_url?: string; follower_username?: string; template_version?:string }>();
-  if (!body.to_igsid) {
+  if (typeof body.to_igsid!=='string'||!body.to_igsid || (body.reward_url!=null&&typeof body.reward_url!=='string') || (body.follower_username!=null&&typeof body.follower_username!=='string') || (body.template_version!==undefined&&!/^[a-f0-9]{64}$/.test(body.template_version))) {
     return c.json({ success: false, error: 'to_igsid required' }, 400);
   }
   const rm = await getRichMessage(c.env.DB, id);
   if (!rm) return c.json({ success: false, error: 'not found' }, 404);
 
-  const account = await resolveAccount(c);
+  const accountQuery=c.req.query('account_id');
+  const account = c.env.RECRUITMENT_LEDGER_ENFORCEMENT==='1'
+    ? (accountQuery!==undefined?await c.env.DB.prepare('SELECT * FROM ig_accounts WHERE id=?').bind(accountQuery).first<IgAccount>():await c.env.DB.prepare('SELECT * FROM ig_accounts WHERE is_default=1 LIMIT 1').first<IgAccount>())
+    : await resolveAccount(c);
   if (!account) return c.json({ success: false, error: 'account not found' }, 404);
   const follower=await getFriendByIgsid(c.env.DB,body.to_igsid);
   if (!follower || follower.account_id!==account.id || await messagingEligibility(c.env.DB,follower.id,account.id)!=='eligible') return c.json({success:false,error:'テスト送信先から24時間以内にDMを受信し、このアプリが応答を担当している必要があります。'},409);

@@ -225,6 +225,10 @@ export async function getAccountClient(
       }
       return rewriteTrackedMessage(env, igsid, message);
     },
+    beforeMutation:async({path,body})=>{
+      await guard();
+      if(env.RECRUITMENT_LEDGER_ENFORCEMENT==='1'&&(!path.endsWith('/messages')||!body||typeof body!=='object'||!('message' in body)))throw Error('Recruitment mutation purpose is not connected');
+    },
     beforeRequest:()=>{if(blockedUntil>Date.now())throw new InstagramApiError('Instagram API is cooling down',429,613,undefined,blockedUntil-Date.now());},
     onResponse:async observation=>{
       if(observation.status===429 || [4,17,32,613,80002].includes(observation.code ?? -1)) blockedUntil=Date.now()+(Number.isFinite(observation.retryAfterMs)?Math.max(1000,observation.retryAfterMs!):60_000);

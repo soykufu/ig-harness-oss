@@ -1,5 +1,9 @@
 # 採用DM共通台帳の組込み条件
 
+## 非DM mutationの未接続経路（2026-11-21・ソースのみ）
+
+公開コメント/mention/sender actionなどmessage lifecycleを通らないPOSTも、SDKの変換・署名処理後、fetch直前に停止/準備ロックを確認する。強制モードで目的別契約が未接続の非DM mutationは、別用途のkeyを渡しても拒否する。DM用のkeyだけで公開返信や他のmutationを許可しない。読み取りのGETはこのmutation用検査で送信扱いにしない。この拒否は公開返信の目的契約を実装完了としたものではなく、その接続までは意図的に保留する準備。
+
 ## Rich test-sendの操作・目的固定（2026-11-21・ソース準備のみ）
 
 テスト送信はowner/adminに限定し、強制モードでは同じ手動操作台帳のnonceに宛先・template/kind/全blocks・URL/username差込context・認証済みactorを固定する。SDKは各ブロックの生payloadを共通レンダラの期待値と照合し、fetch直前にテンプレート所有account/本文/操作者の現DB権限/同じclaimed intentを再確認する。通常の停止・準備ロック・24h・通数・受信保留・業務状態の条件は全て維持する。テンプレ変更や一部送信で失敗した操作はuncertainとし、新しい表現やIDで自動再送しない。完了再読でも全スロットの証拠件数が一致しなければ成功にしない。
