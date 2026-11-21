@@ -18,6 +18,7 @@ export async function assertRecruitmentAutomationAdmission(db:D1Database,account
  AND NOT EXISTS(SELECT 1 FROM comment_rule_jobs WHERE account_id=f.account_id AND public_reply_status IN ('processing','uncertain'))
  AND NOT EXISTS(SELECT 1 FROM gate_deliveries d JOIN engagement_gates g ON g.id=d.gate_id WHERE g.account_id=f.account_id AND d.end_reason='outcome_unknown')
  AND NOT EXISTS(SELECT 1 FROM recruitment_gate_operations WHERE account_id=f.account_id AND state='uncertain')
+ AND NOT EXISTS(SELECT 1 FROM recruitment_gate_followup_operations WHERE account_id=f.account_id AND state='uncertain')
  AND NOT EXISTS(SELECT 1 FROM recruitment_gate_cta_operations WHERE account_id=f.account_id AND state='uncertain')`)
  .bind(now-60000,now,followerId,accountId,now,now-60000).first<{igsid:string;metadata:string;owner_epoch:string}>();
  if(!row||await messagingEligibility(db,followerId,accountId,now)!=='eligible')throw Error('Automatic recruitment action requires reconciliation');
@@ -41,6 +42,7 @@ export function recruitmentAdmissionPredicate(accountId:string,followerId:number
  AND NOT EXISTS(SELECT 1 FROM data_deletion_locks WHERE account_id=f.account_id)
  AND NOT EXISTS(SELECT 1 FROM recruitment_inbound_holds WHERE account_id=f.account_id AND subject_hash=?)
  AND NOT EXISTS(SELECT 1 FROM recruitment_outbound_operations WHERE account_id=f.account_id AND (state='uncertain' OR reserved_at_ms>? OR (state='reserved' AND reserved_at_ms<=?)))
+ AND NOT EXISTS(SELECT 1 FROM recruitment_gate_followup_operations WHERE account_id=f.account_id AND state='uncertain')
  AND NOT EXISTS(SELECT 1 FROM recruitment_gate_cta_operations WHERE account_id=f.account_id AND state='uncertain')
  AND NOT EXISTS(SELECT 1 FROM recruitment_gate_operations WHERE account_id=f.account_id AND state='uncertain')
  AND NOT EXISTS(SELECT 1 FROM comment_rule_jobs WHERE account_id=f.account_id AND public_reply_status IN ('processing','uncertain'))

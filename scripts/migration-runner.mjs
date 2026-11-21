@@ -145,6 +145,7 @@ export async function verifyLatestSchema(query) {
     broadcast_recipients: ['broadcast_id','follower_id','status'],
     webhook_events: ['account_id','event_key','subject_id','status'],
     rate_limit_buckets: ['bucket_key','hits','expires_at'],
+    recruitment_gate_followup_operations: ['account_id','operation_key','delivery_id','follower_id','step_index','definition_version','payload_version','expected_messages','owner_epoch','claimed_at_ms','state'],
     recruitment_gate_cta_operations: ['account_id','operation_key','event_key','delivery_id','follower_id','mode','definition_version','source_hash','payload_version','expected_messages','owner_epoch','claimed_at_ms','state'],
     recruitment_gate_operations: ['account_id','operation_key','event_key','delivery_id','follower_id','phase','loop_count','definition_version','payload_version','expected_messages','owner_epoch','claimed_at_ms','state'],
     gate_deliveries: ['id','gate_id','follower_id','igsid','status','metadata','end_reason','delivered_at','followup_step_sent','next_followup_at'],
@@ -183,6 +184,12 @@ export async function verifyLatestSchema(query) {
     const columns=await query('PRAGMA index_info('+JSON.stringify(index.name)+')');ctaUnique.push(JSON.stringify(columns.map(column=>column.name)));
   }
   for(const columns of [['account_id','operation_key'],['account_id','event_key'],['account_id','delivery_id']])if(!ctaUnique.includes(JSON.stringify(columns)))throw new Error('Schema verification failed: CTA operation uniqueness missing');
+  const followupIndexes=await query('PRAGMA index_list(recruitment_gate_followup_operations)');
+  const followupUnique=[];
+  for(const index of followupIndexes.filter(index=>index.unique===1)){
+    const columns=await query('PRAGMA index_info('+JSON.stringify(index.name)+')');followupUnique.push(JSON.stringify(columns.map(column=>column.name)));
+  }
+  for(const columns of [['account_id','operation_key'],['account_id','delivery_id','step_index']])if(!followupUnique.includes(JSON.stringify(columns)))throw new Error('Schema verification failed: follow-up operation uniqueness missing');
   const formIndexes=await query('PRAGMA index_list(form_submissions)');
   if(!formIndexes.some(index=>index.name==='idx_form_submission_request' && index.unique===1))throw new Error('Schema verification failed: form request uniqueness missing');
   const requestColumns=await query('PRAGMA index_info(idx_form_submission_request)');

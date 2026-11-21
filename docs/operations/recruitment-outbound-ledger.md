@@ -1,5 +1,11 @@
 # 採用DM共通台帳の組込み条件
 
+## 後続stepの不変receipt（2026-11-21・本番未適用）
+
+0041は今後の強制モードだけに各account/delivery/stepの一意receiptを保存する。owner・定義・payload・予定数・claim時刻・claimed/sent/uncertainをmetadataと別に残す。旧配信を推定でbackfillしない。claim前の業務状態確認、claim/receiptの原子的保存、全slotのAPI受付/観測確認、receiptと次stepの原子的完了を組み合わせる。部分送信・保存失敗・定義/所有者/停止/相談/関係gate変更はuncertainを保持し、新しいIDで送らない。receiptが不明なら他経路の枠確保も拒否し、gate/本人データの削除で証跡を消さない。
+
+読取レビューは保存済みの全step receiptを対象にし、旧metadataは最新claimだけ別表示する。旧owner欠落を補わず、API受付と閲覧/LINE登録は区別する。新receiptのない旧履歴から成功を作らない。最新ソース移行数は41、本番の直近実読取は18:46 JSTの27件（当時の40件に対して13件不足）であり、0041も本番未適用。停止1/準備lock1/追加flags無効・Meta未接続のまま。本番移行・配置は行わない。
+
 ## 停止中実環境の読取結果（2026-11-21 18:46 JST）
 
 [既存read-only smoke run 44891150425](https://github.com/soykufu/ig-harness-oss/actions/runs/44891150425)は成功。指定D1の送信停止1/account0/follower0、移行台帳27件のname/hash一致を正規Actions内だけで確認した。最新ソース40件に対して不足は0028〜0040の13件、既適用ledgerの改変・不明将来移行・重複は0件。これはledger照合であり、未適用schemaの実体が利用可能という意味ではない。

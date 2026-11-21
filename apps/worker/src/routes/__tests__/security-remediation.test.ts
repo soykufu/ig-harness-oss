@@ -167,3 +167,10 @@ it.each(['claimed','uncertain'])('holds GDPR deletion for a %s CTA contract befo
  sqlite.prepare("INSERT INTO recruitment_gate_cta_operations VALUES('a','gate-cta:d','event','d',1,'keyword','definition','source','payload',1,'epoch',0,?)").run(state);
  const res=await request(`/api/data-deletion/${response.confirmation_code}/resolve`,{method:'POST',headers:{Authorization:'Bearer owner-key','Content-Type':'application/json'},body:JSON.stringify({accountId:'a',followerId:1,identityVerified:true})});expect(res.status).toBe(409);expect(sqlite.prepare('SELECT COUNT(*) n FROM followers').get()?.n).toBe(1);
 });
+
+it.each(['claimed','uncertain'])('holds GDPR deletion for a %s followup contract before any transport slot exists',async state=>{
+ const {request,sqlite}=await fixture();const response=await(await request('/data-deletion',{method:'POST',body:new URLSearchParams({signed_request:await signed('app-secret')})})).json() as any;
+ sqlite.exec("INSERT INTO ig_accounts(id,ig_user_id,access_token,created_at,updated_at) VALUES('a','111','test','2026-01-01','2026-01-01');INSERT INTO followers(id,igsid,account_id) VALUES(1,'456','a');INSERT INTO engagement_gates(id,name,trigger_type,initial_dm_text,follow_reminder_dm_text,reward_dm_text,account_id) VALUES('g','g','dm_keyword','a','b','c','a');INSERT INTO gate_deliveries(id,gate_id,follower_id,igsid,status) VALUES('d','g',1,'456','triggered')");
+ sqlite.prepare("INSERT INTO recruitment_gate_followup_operations VALUES('a','gate-followup:d:0','d',1,0,'definition',NULL,NULL,'epoch',0,?)").run(state);
+ const res=await request(`/api/data-deletion/${response.confirmation_code}/resolve`,{method:'POST',headers:{Authorization:'Bearer owner-key','Content-Type':'application/json'},body:JSON.stringify({accountId:'a',followerId:1,identityVerified:true})});expect(res.status).toBe(409);expect(sqlite.prepare('SELECT COUNT(*) n FROM followers').get()?.n).toBe(1);
+});

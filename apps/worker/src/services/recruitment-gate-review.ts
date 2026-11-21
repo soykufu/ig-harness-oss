@@ -22,7 +22,11 @@ export async function readGateReview(db:D1Database,accountId:string,gateId:strin
  UNION ALL
  SELECT o.operation_key,'cta' AS phase,o.state,o.claimed_at_ms,o.expected_messages,o.owner_epoch,o.definition_version,o.payload_version,o.source_hash AS source_version,d.status AS delivery_state,d.end_reason
  FROM recruitment_gate_cta_operations o JOIN gate_deliveries d ON d.id=o.delivery_id JOIN engagement_gates g ON g.id=d.gate_id AND g.account_id=o.account_id
- WHERE o.account_id=? AND g.id=? ) ORDER BY CASE WHEN state='sent' OR state='skipped' THEN 1 ELSE 0 END,claimed_at_ms DESC,operation_key LIMIT 101`).bind(accountId,gateId,accountId,gateId).all<any>();
+ WHERE o.account_id=? AND g.id=?
+ UNION ALL
+ SELECT o.operation_key,'followup' AS phase,o.state,o.claimed_at_ms,o.expected_messages,o.owner_epoch,o.definition_version,o.payload_version,NULL AS source_version,d.status AS delivery_state,d.end_reason
+ FROM recruitment_gate_followup_operations o JOIN gate_deliveries d ON d.id=o.delivery_id JOIN engagement_gates g ON g.id=d.gate_id AND g.account_id=o.account_id
+ WHERE o.account_id=? AND g.id=? ) ORDER BY CASE WHEN state='sent' OR state='skipped' THEN 1 ELSE 0 END,claimed_at_ms DESC,operation_key LIMIT 101`).bind(accountId,gateId,accountId,gateId,accountId,gateId).all<any>();
  const recordSlots=await reviewSlots(db,accountId,records.results.slice(0,100).map(r=>r.operation_key));
  const items:GateReviewItem[]=[];
  for(const row of records.results.slice(0,100)){
@@ -41,6 +45,7 @@ export async function readGateReview(db:D1Database,accountId:string,gateId:strin
  WHERE g.id=? AND g.account_id=? AND d.end_reason IN ('delivery_in_progress','outcome_unknown')
  AND NOT EXISTS(SELECT 1 FROM recruitment_gate_operations o WHERE o.account_id=g.account_id AND o.delivery_id=d.id)
  AND NOT EXISTS(SELECT 1 FROM recruitment_gate_cta_operations o WHERE o.account_id=g.account_id AND o.delivery_id=d.id)
+ AND NOT EXISTS(SELECT 1 FROM recruitment_gate_followup_operations o WHERE o.account_id=g.account_id AND o.delivery_id=d.id)
  AND COALESCE(CASE WHEN json_valid(d.metadata) THEN json_type(d.metadata,'$.recruitment_followup') END,'')!='object'
  ORDER BY d.triggered_at DESC,d.id LIMIT 51`).bind(gateId,accountId).all<any>();
  for(const d of pending.results.slice(0,50))items.unshift({id:'hold:'+d.id,phase:d.phase,state:d.end_reason==='outcome_unknown'?'uncertain':'claimed',recordedAt:Number.isFinite(Date.parse(d.triggered_at))?new Date(d.triggered_at).toISOString():null,expectedMessages:null,recordedMessages:0,apiAcknowledged:0,recordedSuccess:false,needsReview:true,mayRetry:false,recipientReceipt:'unknown',echoEvidence:'unknown',deliveryState:d.status,endReason:d.end_reason});
@@ -55,6 +60,7 @@ export async function readGateReview(db:D1Database,accountId:string,gateId:strin
  json_extract(d.metadata,'$.recruitment_followup.claimed_at_ms') AS claimed_at_ms
  FROM gate_deliveries d JOIN engagement_gates g ON g.id=d.gate_id
  WHERE g.id=? AND g.account_id=? AND json_valid(d.metadata) AND json_type(d.metadata,'$.recruitment_followup')='object'
+ AND NOT EXISTS(SELECT 1 FROM recruitment_gate_followup_operations r WHERE r.delivery_id=d.id AND r.account_id=g.account_id AND r.step_index=json_extract(d.metadata,'$.recruitment_followup.step'))
  ORDER BY CASE WHEN d.end_reason IS NOT NULL THEN 0 ELSE 1 END,d.triggered_at DESC,d.id LIMIT 51`).bind(gateId,accountId).all<any>();
  const followupSlots=await reviewSlots(db,accountId,followups.results.slice(0,50).filter(r=>Number.isSafeInteger(r.step)&&r.step>=0).map(r=>'gate-followup:'+encodeURIComponent(r.id)+':'+r.step));
  for(const row of followups.results.slice(0,50)){
@@ -87,5 +93,5 @@ export async function readGateReview(db:D1Database,accountId:string,gateId:strin
   items.push({id:'public:'+await sha256(JSON.stringify([accountId,row.id])),phase:'public_reply',state:row.public_reply_status,recordedAt:Number.isFinite(at)?new Date(at).toISOString():null,expectedMessages:1,recordedMessages:acknowledged?1:0,apiAcknowledged:acknowledged?1:0,recordedSuccess:success,needsReview:!success||row.end_reason==='outcome_unknown',mayRetry:false,recipientReceipt:'unknown',echoEvidence:'unknown',deliveryState:row.delivery_state,endReason:row.end_reason});
  }
  items.sort((a,b)=>Number(b.needsReview)-Number(a.needsReview)||(b.recordedAt??'').localeCompare(a.recordedAt??'')||a.id.localeCompare(b.id));
- return{followupHistoryScope:'latest_claim_only' as const,items:items.slice(0,50),moreMayExist:recordSlots.truncated||followupSlots.truncated||followups.results.length>50||records.results.length>100||publicRows.results.length>50||pending.results.length>50||items.length>50,mayRetry:false as const,recipientReceipt:'unknown' as const};
+ return{followupHistoryScope:'recorded_steps_and_legacy_latest' as const,items:items.slice(0,50),moreMayExist:recordSlots.truncated||followupSlots.truncated||followups.results.length>50||records.results.length>100||publicRows.results.length>50||pending.results.length>50||items.length>50,mayRetry:false as const,recipientReceipt:'unknown' as const};
 }

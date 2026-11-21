@@ -19,7 +19,7 @@ test('fresh install, second run, staff hashing and account ownership preservatio
   await applyMigrations(adapter(db));
   assert.match(db.prepare('SELECT api_key FROM staff_members').get().api_key, /^sha256:[a-f0-9]{64}$/);
   assert.equal(db.prepare('SELECT account_id FROM comment_rules').get().account_id, 'account-a');
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ig_schema_migrations').get().n, 40);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ig_schema_migrations').get().n, 41);
   db.close();
 });
 test('a failed file has no success marker and can resume without losing earlier migrations', async () => {
@@ -64,7 +64,7 @@ test('adopts legacy repeat-delivery history without recreating the removed uniqu
   await applyMigrations(adapter(db));
   assert.equal(db.prepare('SELECT COUNT(*) n FROM gate_deliveries').get().n, 2);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE name='uq_gate_deliveries_gate_follower'").get().n, 0);
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM ig_schema_migrations').get().n, 40);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM ig_schema_migrations').get().n, 41);
   db.close();
 });
 
@@ -145,3 +145,8 @@ for(const column of ['event_key','source_hash','payload_version','expected_messa
 for(const missing of ['operation_key','event_key','delivery_id'])test(`verifies CTA uniqueness for ${missing} independently of the migration ledger`,async()=>{
  const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));db.exec('ALTER TABLE recruitment_gate_cta_operations RENAME TO damaged_cta');const cols=db.prepare('PRAGMA table_info(damaged_cta)').all().map(c=>c.name+' '+c.type);for(const field of ['operation_key','event_key','delivery_id'])if(field!==missing)cols.push('UNIQUE(account_id,'+field+')');db.exec('CREATE TABLE recruitment_gate_cta_operations('+cols.join(',')+')');await assert.rejects(applyMigrations(adapter(db)),/CTA operation uniqueness missing/);}finally{db.close();}
 });
+
+for(const column of ['step_index','definition_version','payload_version','expected_messages','owner_epoch','claimed_at_ms','state'])test('rejects missing followup receipt column '+column,async()=>{const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));db.exec('ALTER TABLE recruitment_gate_followup_operations RENAME TO damaged_followups');const cols=db.prepare('PRAGMA table_info(damaged_followups)').all().filter(c=>c.name!==column).map(c=>c.name+' '+c.type);db.exec('CREATE TABLE recruitment_gate_followup_operations('+cols.join(',')+')');await assert.rejects(applyMigrations(adapter(db)),new RegExp('Schema verification failed: recruitment_gate_followup_operations.'+column));}finally{db.close();}});
+test('rejects followup receipt tables without operation and delivery-step uniqueness',async()=>{const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));db.exec('ALTER TABLE recruitment_gate_followup_operations RENAME TO damaged_followups');const cols=db.prepare('PRAGMA table_info(damaged_followups)').all().map(c=>c.name+' '+c.type);db.exec('CREATE TABLE recruitment_gate_followup_operations('+cols.join(',')+')');await assert.rejects(applyMigrations(adapter(db)),/follow-up operation uniqueness missing/);}finally{db.close();}});
+
+test('followup receipt migration never manufactures evidence for legacy delivered steps',async()=>{const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));db.exec("DROP TABLE recruitment_gate_followup_operations;DELETE FROM ig_schema_migrations WHERE name='0041_gate_followup_operations.sql';INSERT INTO ig_accounts(id,ig_user_id,access_token,created_at,updated_at) VALUES('a','111','fake','2026-01-01','2026-01-01');INSERT INTO followers(id,igsid,account_id) VALUES(1,'person','a');INSERT INTO engagement_gates(id,name,trigger_type,initial_dm_text,follow_reminder_dm_text,reward_dm_text,account_id) VALUES('g','g','dm_keyword','a','b','c','a');INSERT INTO gate_deliveries(id,gate_id,follower_id,igsid,status,followup_step_sent,metadata) VALUES('d','g',1,'person','delivered',3,'{\"recruitment_followup\":{\"step\":2,\"version\":\"legacy\"}}')");const before=db.prepare('SELECT * FROM gate_deliveries').get();await applyMigrations(adapter(db));assert.deepEqual(db.prepare('SELECT * FROM gate_deliveries').get(),before);assert.equal(db.prepare('SELECT COUNT(*) n FROM recruitment_gate_followup_operations').get().n,0);}finally{db.close();}});

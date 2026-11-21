@@ -1,4 +1,6 @@
-import {isRecruitmentDeliveryWindow} from './recruitment-automation-admission.js';
+import {claimGateFollowupReceipt,prepareGateFollowupReceipt,uncertainGateFollowupReceipt,completeGateFollowupReceipt} from './recruitment-gate-followup-receipt.js';
+import type {RecruitmentEnrollmentGuard} from '@ig-harness/db';
+import {isRecruitmentDeliveryWindow,assertRecruitmentAutomationAdmission} from './recruitment-automation-admission.js';
 import {sendRecruitmentGateCta,type GateCtaContext,type GateCtaProof} from './recruitment-gate-cta.js';
 import {handleRecruitmentGatePostback,type GatePostbackProof} from './recruitment-gate-postback.js';
 import {gateFollowupKey,gateFollowupVersion,gateFollowupPayloadVersion,type GateFollowupProof} from './recruitment-gate-followup.js';
@@ -625,7 +627,9 @@ export async function processFollowupDrip(
       skipped++; continue;
     }
     const version=clientFactory?await gateFollowupVersion(gate,d):undefined;
-    const claim = await db.prepare("UPDATE gate_deliveries SET next_followup_at=NULL,end_reason='delivery_in_progress',metadata=json_set(metadata,'$.recruitment_followup',json(?)) WHERE id=? AND status='delivered' AND followup_step_sent=? AND next_followup_at=? AND EXISTS(SELECT 1 FROM engagement_gates WHERE id=gate_deliveries.gate_id AND status='active') RETURNING id")
+    let snapshot:RecruitmentEnrollmentGuard|undefined;
+    if(clientFactory){try{snapshot=await assertRecruitmentAutomationAdmission(db,accountId??gate.account_id??'',d.follower_id);}catch{skipped++;continue;}}
+    const claim=clientFactory&&snapshot&&version?await claimGateFollowupReceipt(db,snapshot.accountId,gate,d,version,snapshot):await db.prepare("UPDATE gate_deliveries SET next_followup_at=NULL,end_reason='delivery_in_progress',metadata=json_set(metadata,'$.recruitment_followup',json(?)) WHERE id=? AND status='delivered' AND followup_step_sent=? AND next_followup_at=? AND EXISTS(SELECT 1 FROM engagement_gates WHERE id=gate_deliveries.gate_id AND status='active') RETURNING id")
       .bind(JSON.stringify({step:stepIdx,version:version??null,claimed_at_ms:Date.now()}),d.id,d.followup_step_sent,d.next_followup_at).first();
     if (!claim) { skipped++; continue; }
     let sendOk = false;
@@ -639,7 +643,7 @@ export async function processFollowupDrip(
       );
       await recordDmFailure(db, accountId ?? 'unknown').catch(() => {});
       const retry = !clientFactory && err instanceof InstagramApiError && err.status<500 && err.rateLimited;
-      if(clientFactory)await db.prepare("UPDATE gate_deliveries SET end_reason='outcome_unknown' WHERE id=? AND status='delivered' AND followup_step_sent=? AND end_reason='delivery_in_progress' AND json_extract(metadata,'$.recruitment_followup.version')=?").bind(d.id,stepIdx,version).run();
+      if(clientFactory)await uncertainGateFollowupReceipt(db,accountId??gate.account_id??'',d,version!);
       else await updateGateDelivery(db,d.id,{end_reason:retry?'rate_limited':'outcome_unknown',next_followup_at:retry?new Date(Date.now()+Math.max(60_000,(err as InstagramApiError).retryAfterMs ?? 60_000)).toISOString():null});
     }
 
@@ -654,10 +658,10 @@ export async function processFollowupDrip(
       // Do not erase a newer stop/drop or schedule from another actor.
       let recorded:unknown;
       try{
-        recorded=await db.prepare("UPDATE gate_deliveries SET end_reason=NULL,followup_step_sent=?,next_followup_at=? WHERE id=? AND status='delivered' AND followup_step_sent=? AND end_reason='delivery_in_progress' AND json_extract(metadata,'$.recruitment_followup.version')=? AND EXISTS(SELECT 1 FROM engagement_gates WHERE id=gate_deliveries.gate_id AND status='active' AND followup_dm_sequence IS ? AND reward_url IS ? AND line_connection_id IS ? AND line_pool_slug IS ? AND line_tracked_link_short IS ?) RETURNING id").bind(nextStep,nextAt,d.id,stepIdx,version,gate.followup_dm_sequence,gate.reward_url,gate.line_connection_id,gate.line_pool_slug,gate.line_tracked_link_short).first();
+        await completeGateFollowupReceipt(db,snapshot!.accountId,gate,d,version!,nextAt,snapshot!);recorded=true;
       }catch{console.error('[followup] completion journal requires reconciliation');}
       if(!recorded){
-        await db.prepare("UPDATE gate_deliveries SET end_reason='outcome_unknown' WHERE id=? AND status='delivered' AND followup_step_sent=? AND end_reason='delivery_in_progress' AND json_extract(metadata,'$.recruitment_followup.version')=?").bind(d.id,stepIdx,version).run();
+        await uncertainGateFollowupReceipt(db,snapshot!.accountId,d,version!);
         skipped++;continue;
       }
     }else await updateGateDelivery(db, d.id, {end_reason: null,followup_step_sent: nextStep,next_followup_at: nextAt});
@@ -693,8 +697,7 @@ async function sendFollowupStep(
   }else actions.push({type:'text',text:expandedText});
   if(guarded){
     const messages=actions.map(richActionMessage),payloadVersion=await gateFollowupPayloadVersion(messages);
-    const prepared=await db.prepare("UPDATE gate_deliveries SET metadata=json_set(metadata,'$.recruitment_followup.payload',?,'$.recruitment_followup.expected_messages',?) WHERE id=? AND status='delivered' AND end_reason='delivery_in_progress' AND followup_step_sent=? AND json_extract(metadata,'$.recruitment_followup.version')=? AND json_extract(metadata,'$.recruitment_followup.payload') IS NULL RETURNING id").bind(payloadVersion,messages.length,guarded.delivery.id,guarded.delivery.followup_step_sent,guarded.version).first();
-    if(!prepared)throw Error('Gate follow-up preparation changed');
+    await prepareGateFollowupReceipt(db,gate.account_id!,guarded.delivery,guarded.version,payloadVersion,messages.length);
     const proof:GateFollowupProof={deliveryId:guarded.delivery.id,stepIndex:guarded.delivery.followup_step_sent,followerId:guarded.delivery.follower_id,igsid,definitionVersion:guarded.version,messages,payloadVersion};
     igClient=await guarded.factory(gateFollowupKey(proof.deliveryId,proof.stepIndex),guarded.version,undefined,proof);
   }
