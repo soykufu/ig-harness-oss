@@ -268,13 +268,14 @@ export const richMessagesApi = {
   },
   testSend: async (
     id: string,
-    body: { to_igsid: string; reward_url?: string; follower_username?: string },
-  ): Promise<{ sent_blocks: number; sent_at: string }> => {
-    const res = await fetchApi<ApiResponse<{ sent_blocks: number; sent_at: string }>>(
+    body: { to_igsid: string; reward_url?: string; follower_username?: string; template_version?:string },
+    nonce?:string,
+  ): Promise<{ sent_blocks: number; sent_at: string|null; replayed?:boolean }> => {
+    const res = await fetchApi<ApiResponse<{ sent_blocks: number; sent_at: string|null; replayed?:boolean }>>(
       `/api/rich-messages/${id}/test-send`,
-      { method: 'POST', body: JSON.stringify(body) },
+      { method: 'POST', headers:nonce?{'Idempotency-Key':nonce}:undefined,body: JSON.stringify(body) },
     )
-    if (!res.data) throw new Error(res.error || 'test-send failed')
+    if (!res.success || !res.data) throw new Error(res.error || 'test-send failed')
     return res.data
   },
 }

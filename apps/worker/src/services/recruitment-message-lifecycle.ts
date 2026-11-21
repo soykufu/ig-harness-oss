@@ -1,3 +1,4 @@
+import {assertRecruitmentRichTestReady,assertRecruitmentRichTestPayload,type RecruitmentRichTest} from './recruitment-rich-test.js';
 import {assertHumanReplyContract,type HumanReplyInput} from './recruitment-human-reply.js';
 import {assertRecruitmentBroadcastReady} from './recruitment-broadcast-admission.js';
 import { assertRecruitmentStepReady } from './recruitment-step-admission.js';
@@ -14,7 +15,7 @@ import { messagingEligibility } from './messaging-window.js';
  * Do not generate a new operation key to retry a failed/unknown delivery.
  */
 export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
-  operation: { key: string; ownerEpoch: string; definitionVersion?: string; subjectVersion?: string; humanReply?: HumanReplyInput } | undefined,
+  operation: { key: string; ownerEpoch: string; definitionVersion?: string; subjectVersion?: string; humanReply?: HumanReplyInput; richTest?: RecruitmentRichTest } | undefined,
   guard: () => Promise<void>, now = Date.now): MessageLifecycle {
   let slot = 0;
   let failed = false;
@@ -34,6 +35,10 @@ export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
           const target=await db.prepare('SELECT igsid FROM followers WHERE id=? AND account_id=?').bind(reply.followerId,accountId).first<{igsid:string}>();
           if(target?.igsid!==payload.recipient.id)throw Error('Human reply recipient changed');
           await assertHumanReplyContract(db,reply,operation.key,true,nowMs);
+        }
+        if(operation.richTest){
+          await assertRecruitmentRichTestPayload(db,accountId,operation.richTest,slot,payload);
+          await assertRecruitmentRichTestReady(db,accountId,operation,operation.richTest,nowMs);
         }
         const hour = new Date(nowMs + 9 * 3_600_000).getUTCHours();
         if (hour < 8 || hour >= 21) throw new Error('Outside recruitment delivery window');
@@ -58,6 +63,7 @@ export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
       if (expectedRecipient) {
         const follower = await db.prepare('SELECT id,metadata FROM followers WHERE account_id=? AND igsid=?').bind(accountId,expectedRecipient).first<{id:number;metadata:string}>();
         if (!follower || await messagingEligibility(db,follower.id,accountId,nowMs)!=='eligible') throw new Error('Recruitment recipient is not eligible');
+        if(operation.richTest){if(operation.richTest.followerId!==follower.id)throw Error('Rich test recipient changed');await assertRecruitmentRichTestReady(db,accountId,operation,operation.richTest,nowMs);}
         if (operation.key.startsWith('step:')) await assertRecruitmentStepReady(db, accountId, follower.id, operation.key, operation.definitionVersion, operation.subjectVersion);
         if (operation.key.startsWith('broadcast:')) await assertRecruitmentBroadcastReady(db,accountId,follower.id,operation.key,operation.definitionVersion,nowMs);
         if(operation.humanReply){

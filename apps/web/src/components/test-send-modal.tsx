@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
-import { api, richMessagesApi, type FollowerApi } from '@/lib/api'
+import { useCallback, useEffect, useState, useRef } from 'react'
+import { api, fetchApi, getApiAccountId, richMessagesApi, type FollowerApi } from '@/lib/api'
 
 interface Props {
   open: boolean
@@ -19,27 +19,48 @@ export default function TestSendModal({ open, onClose, richMessageId, richMessag
   const [result, setResult] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [pending, setPending] = useState(true)
+  const [completed, setCompleted] = useState(false)
+  const lock=useRef(false),active=useRef(true),scope=useRef(getApiAccountId())
+  const storageKey=`ig-rich-intent:${scope.current}:${richMessageId}`
+  const current=()=>active.current&&!!scope.current&&getApiAccountId()===scope.current
+  useEffect(()=>{active.current=true;try{setPending(!!sessionStorage.getItem(storageKey))}catch{setError('端末の確認記録を読めません。送信を保留します。')}return()=>{active.current=false}},[storageKey])
+  const digest=async(value:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))).map(b=>b.toString(16).padStart(2,'0')).join('')
+  const checkResult=async()=>{
+    if(lock.current||!current())return
+    lock.current=true;setSending(true)
+    try{
+      const raw=sessionStorage.getItem(storageKey);if(!raw)throw Error('照合できる操作記録がありません。未送信とは判断できません。')
+      const saved=JSON.parse(raw) as {nonce:string;friendId:string;blocks:number}
+      if(!/^[A-Za-z0-9_-]{16,100}$/.test(saved.nonce)||!/^\d+$/.test(saved.friendId)||!Number.isSafeInteger(saved.blocks)||saved.blocks<1||saved.blocks>10)throw Error('確認記録が不完全です。')
+      const res=await fetchApi<{success:boolean;data:{recordedSuccess:boolean;operations:unknown[]}}>(`/api/friends/${saved.friendId}/manual-delivery-status`,{headers:{'Idempotency-Key':saved.nonce},cache:'no-store'})
+      if(!current())return
+      if(!res.success||!res.data.recordedSuccess||res.data.operations.length!==saved.blocks)throw Error('全ブロックの完了証拠が未確認です。再送しないでください。')
+      sessionStorage.removeItem(storageKey);setPending(false);setCompleted(true);setError('');setResult('送信APIと全ブロックの完了記録を確認しました。到着・既読は未確認です。')
+    }catch(err){if(current())setError(err instanceof Error?err.message:'結果を照合できません。再送しないでください。')}
+    finally{lock.current=false;setSending(false)}
+  }
 
   const handleSend = async () => {
-    if (!toIgsid.trim()) {
-      setError('宛先を選択してください')
-      return
-    }
-    setSending(true)
-    setError('')
-    setResult(null)
+    if(lock.current||!current()||pending||completed)return
+    if (!pickedFollower?.id||pickedFollower.igsid!==toIgsid.trim()) {setError('結果を照合できるよう、一覧からテスト先を選んでください');return}
+    lock.current=true;setSending(true);setPickerOpen(false);setError('');setResult(null)
     try {
-      const res = await richMessagesApi.testSend(richMessageId, {
-        to_igsid: toIgsid.trim(),
-        reward_url: rewardUrl.trim() || undefined,
-        follower_username: followerUsername.trim() || (pickedFollower?.username ?? undefined),
-      })
-      setResult(`✅ ${res.sent_blocks} 件のブロックを送信しました (${res.sent_at})`)
+      if(sessionStorage.getItem(storageKey))throw Error('確認待ちのテストがあります。再送せず結果を照合してください。')
+      const template=await fetchApi<{success:boolean;data:{id:string;kind:string;blocks:unknown[]}}>(`/api/rich-messages/${richMessageId}`,{cache:'no-store'})
+      if(!template.success||!Array.isArray(template.data.blocks)||!template.data.blocks.length||template.data.blocks.length>10)throw Error('テンプレートを確認できません。')
+      const template_version=await digest(JSON.stringify([template.data.id,template.data.kind,template.data.blocks]))
+      const body={to_igsid:toIgsid.trim(),reward_url:rewardUrl.trim()||undefined,follower_username:followerUsername.trim()||(pickedFollower.username??undefined),template_version}
+      const saved={nonce:crypto.randomUUID(),friendId:String(pickedFollower.id),blocks:template.data.blocks.length,digest:await digest(JSON.stringify(body))}
+      if(!current())return
+      sessionStorage.setItem(storageKey,JSON.stringify(saved));setPending(true)
+      const res=await richMessagesApi.testSend(richMessageId,body,saved.nonce)
+      if(!current())return
+      if(res.sent_blocks!==saved.blocks)throw Error('送信ブロック数を確認できません。')
+      sessionStorage.removeItem(storageKey);setPending(false);setCompleted(true);setResult('送信APIの応答と全ブロックの処理完了を確認しました。到着・既読は未確認です。')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'test-send failed')
-    } finally {
-      setSending(false)
-    }
+      if(current())setError('再送せず「送信結果を照合」で確認してください。 '+(err instanceof Error?err.message:'結果不明'))
+    } finally {lock.current=false;setSending(false)}
   }
 
   if (!open) return null
@@ -61,6 +82,7 @@ export default function TestSendModal({ open, onClose, richMessageId, richMessag
           </div>
 
           <div className="p-6 space-y-4">
+            <fieldset disabled={sending || pending || completed} className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-kumo-default mb-1">
                 宛先 <span className="text-red-500">*</span>
@@ -113,7 +135,7 @@ export default function TestSendModal({ open, onClose, richMessageId, richMessag
                     フォロワーから選ぶ
                   </button>
                   <details className="mt-2">
-                    <summary className="text-[11px] text-kumo-subtle cursor-pointer">IGSID を直接入力（上級者向け）</summary>
+                    <summary className="text-[11px] text-kumo-subtle cursor-pointer">IGSID の確認（送信先は一覧から選択）</summary>
                     <input
                       type="text"
                       value={toIgsid}
@@ -160,6 +182,10 @@ export default function TestSendModal({ open, onClose, richMessageId, richMessag
               )}
             </div>
 
+            </fieldset>
+            {pending && <p role="status" className="text-xs text-amber-800">確認待ちのテストがあります。入力を変えても再送できません。</p>}
+            <button type="button" disabled={sending||!pending||!current()} onClick={checkResult} className="text-xs underline disabled:opacity-40">送信結果を照合</button>
+            {completed && <button type="button" disabled={sending||!current()} onClick={()=>{setCompleted(false);setResult(null)}} className="ml-3 text-xs underline">別のテストを準備</button>}
             {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
             {result && <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">{result}</div>}
 
@@ -174,7 +200,7 @@ export default function TestSendModal({ open, onClose, richMessageId, richMessag
               <button
                 type="button"
                 onClick={handleSend}
-                disabled={sending || !toIgsid.trim()}
+                disabled={sending || pending || completed || !current() || !pickedFollower || pickedFollower.igsid!==toIgsid.trim()}
                 className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50"
                 style={{ backgroundColor: '#E1306C' }}
               >
@@ -265,7 +291,7 @@ function FollowerPickerModal({
             <div className="text-center text-sm text-red-600 py-12">{error}</div>
           ) : items.length === 0 ? (
             <div className="text-center text-sm text-kumo-subtle py-12">
-              {search ? '該当するフォロワーがいません' : 'フォロワーがまだいません。まず自分に向けて送る場合は「IGSID を直接入力」を開いてください'}
+              {search ? '該当するフォロワーがいません' : 'フォロワーがまだいません。受信履歴と応答権限を確認してからテスト先を選択してください'}
             </div>
           ) : (
             <div className="divide-y divide-gray-100">

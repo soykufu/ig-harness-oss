@@ -1,3 +1,8 @@
+import {readRecruitmentManualStatus} from '../services/recruitment-manual-status.js';
+import {requireRole} from '../middleware/role-guard.js';
+import {claimRecruitmentManualIntent,finishRecruitmentManualIntent} from '../services/recruitment-manual-intent.js';
+import {recruitmentRichTestContent,type RecruitmentRichTest} from '../services/recruitment-rich-test.js';
+import {sha256} from '../lib/security.js';
 import { messagingEligibility } from '../services/messaging-window.js';
 import { getFriendByIgsid } from '@ig-harness/db';
 import { Hono } from 'hono';
@@ -236,9 +241,12 @@ richMessages.delete('/api/rich-messages/:id', async (c) => {
  * Test-send a rich message to an arbitrary IGSID (typically the operator's own).
  * Body: { to_igsid: string }
  */
-richMessages.post('/api/rich-messages/:id/test-send', async (c) => {
-  const id = c.req.param('id');
-  const body = await c.req.json<{ to_igsid?: string; reward_url?: string; follower_username?: string }>();
+richMessages.post('/api/rich-messages/:id/test-send', requireRole('owner','admin'), async (c) => {
+  c.header('Cache-Control','no-store');
+  let intent:{accountId:string;key:string}|undefined;
+  try {
+  const id = c.req.param('id')??'';
+  const body = await c.req.json<{ to_igsid?: string; reward_url?: string; follower_username?: string; template_version?:string }>();
   if (!body.to_igsid) {
     return c.json({ success: false, error: 'to_igsid required' }, 400);
   }
@@ -249,9 +257,23 @@ richMessages.post('/api/rich-messages/:id/test-send', async (c) => {
   if (!account) return c.json({ success: false, error: 'account not found' }, 404);
   const follower=await getFriendByIgsid(c.env.DB,body.to_igsid);
   if (!follower || follower.account_id!==account.id || await messagingEligibility(c.env.DB,follower.id,account.id)!=='eligible') return c.json({success:false,error:'テスト送信先から24時間以内にDMを受信し、このアプリが応答を担当している必要があります。'},409);
-  const igClient = await getAccountClient(c.env, c.env.DB, account);
+  if(!await c.env.DB.prepare('SELECT id FROM rich_messages WHERE id=? AND account_id=?').bind(id,account.id).first())return c.json({success:false,error:'not found'},404);
+  if(body.template_version!==undefined&&body.template_version!==await sha256(JSON.stringify([rm.id,rm.kind,rm.blocks])))return c.json({success:false,error:'テンプレートが変更されました。再送せず確認してください。'},409);
+  let operation:{key:string;ownerEpoch:string;richTest:RecruitmentRichTest}|undefined;
+  if(c.env.RECRUITMENT_LEDGER_ENFORCEMENT==='1'){
+    const proof={richId:id,followerId:follower.id,actorId:c.get('staff').id,rewardUrl:body.reward_url??null,followerUsername:body.follower_username??null,definitionVersion:''};
+    const content=recruitmentRichTestContent(rm,proof);proof.definitionVersion=await sha256(content);
+    const claim=await claimRecruitmentManualIntent(c.env.DB,{accountId:account.id,followerId:follower.id,nonce:c.req.header('Idempotency-Key')??'',messageType:'rich-test',content},c.env.OUTBOUND_PREPARATION_LOCK==='1');
+    if(claim.status==='sent'){
+      const status=await readRecruitmentManualStatus(c.env.DB,account.id,follower.id,c.req.header('Idempotency-Key')??'');
+      if(!status?.recordedSuccess||status.operations.length!==rm.blocks.length)return c.json({success:false,error:'送信記録の照合が必要です。再送しないでください。'},409);
+      return c.json({success:true,data:{replayed:true,sent_blocks:rm.blocks.length,sent_at:null,recipientReceipt:'unknown'}});
+    }
+    if(claim.status!=='claimed'||!claim.key||!claim.ownerEpoch)return c.json({success:false,error:'結果の照合が必要です。新しいIDで再送しないでください。'},409);
+    intent={accountId:account.id,key:claim.key};operation={key:claim.key,ownerEpoch:claim.ownerEpoch,richTest:proof};
+  }
+  const igClient = await getAccountClient(c.env, c.env.DB, account,{skipTokenRefresh:true,recruitmentOperation:operation});
 
-  try {
     const res = await igClient.sendRichMessage(body.to_igsid, rm.blocks, {
       rewardUrl: body.reward_url ?? null,
       followerUsername: body.follower_username ?? null,
@@ -260,9 +282,11 @@ richMessages.post('/api/rich-messages/:id/test-send', async (c) => {
       gateId: 'preview-gate',
       deliveryId: 'preview-delivery',
     });
-    return c.json({ success: true, data: { sent_blocks: res.sentBlocks, sent_at: new Date().toISOString() } });
+    if(intent){if(res.sentBlocks!==rm.blocks.length||res.sentBlocks<1)throw Error('Incomplete rich test');await finishRecruitmentManualIntent(c.env.DB,intent.accountId,intent.key,'sent');}
+    return c.json({ success: true, data: { sent_blocks: res.sentBlocks, sent_at: new Date().toISOString(),recipientReceipt:'unknown' } });
   } catch (err) {
-    return c.json({ success: false, error: String(err) }, 500);
+    if(intent)await finishRecruitmentManualIntent(c.env.DB,intent.accountId,intent.key,'uncertain').catch(()=>{});
+    return c.json({ success: false, error: 'テスト送信結果を確認できません。再送せず同じIDで照合してください。' }, 409);
   }
 });
 

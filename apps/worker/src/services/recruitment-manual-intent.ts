@@ -1,5 +1,8 @@
 import { sha256 } from '../lib/security.js';
 export type ManualIntent = { accountId:string; followerId:number; nonce:string; messageType:string; content:string; altText?:string };
+export function recruitmentManualBodyHash(input:Pick<ManualIntent,'followerId'|'messageType'|'content'|'altText'>){
+ return sha256(JSON.stringify([input.followerId,input.messageType,input.content,input.altText??'']));
+}
 export async function claimRecruitmentManualIntent(db:D1Database,input:ManualIntent,preparationLocked=true,nowMs=Date.now()):Promise<{
   status:'claimed'|'sent'|'uncertain'|'conflict'|'held'; key?:string; ownerEpoch?:string;
 }> {
@@ -7,7 +10,7 @@ export async function claimRecruitmentManualIntent(db:D1Database,input:ManualInt
   if (!Number.isSafeInteger(input.followerId)||input.followerId<1) throw new Error('Invalid follower');
   if(preparationLocked)return {status:'held'};
   const key='manual:'+await sha256(JSON.stringify([input.accountId,input.nonce]));
-  const hash=await sha256(JSON.stringify([input.followerId,input.messageType,input.content,input.altText??'']));
+  const hash=await recruitmentManualBodyHash(input);
   const control=await db.prepare(`SELECT owner_epoch FROM recruitment_outbound_control WHERE account_id=? AND owner='harness'
     AND reconciled_at_ms BETWEEN ? AND ?`).bind(input.accountId,nowMs-60_000,nowMs).first<{owner_epoch:string}>();
   if(!control)return {status:'held'};

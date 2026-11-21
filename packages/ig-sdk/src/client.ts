@@ -1,3 +1,5 @@
+import {renderRichActions} from './rich-actions.js';
+export {MAX_RICH_MESSAGE_BLOCKS} from './rich-actions.js';
 import { createAppSecretProof } from './proof.js';
 import { graphApiVersion } from './config.js';
 export { DEFAULT_GRAPH_API_VERSION } from './config.js';
@@ -13,14 +15,13 @@ import type {
   UserProfile,
   MediaInfo,
   RichMessageBlock,
-  CardBlock,
   RichMessageContext,
   CreateContainerParams,
   ContainerStatus,
   PublishingLimit,
 } from "./types.js";
 
-export const MAX_RICH_MESSAGE_BLOCKS = 10;
+
 export type MessageLifecycle = {
   before(payload: { recipient?: { id?: string; comment_id?: string }; message?: unknown }): Promise<string>;
   beforeFetch?(ticket: string): Promise<void>;
@@ -539,88 +540,16 @@ export class InstagramClient {
     blocks: RichMessageBlock[],
     context: RichMessageContext = {},
   ): Promise<{ sentBlocks: number }> {
-    if (blocks.length > MAX_RICH_MESSAGE_BLOCKS) throw new Error(`Rich messages support at most ${MAX_RICH_MESSAGE_BLOCKS} blocks; split larger sequences into scheduled steps`);
-    const interpolate = (s: string): string =>
-      s
-        .replace(/\{\{?\s*IGSID\s*\}?\}/g, recipientId)
-        .replace(/\{\{?\s*GATE_ID\s*\}?\}/g, context.gateId ?? "")
-        .replace(/\{\{?\s*DELIVERY_ID\s*\}?\}/g, context.deliveryId ?? "")
-        .replace(/\{\{?\s*REWARD_URL\s*\}?\}/g, context.rewardUrl ?? "")
-        .replace(
-          /\{\{?\s*FOLLOWER_USERNAME\s*\}?\}/g,
-          context.followerUsername ?? "",
-        );
-
-    const cardToElement = (
-      card: Omit<CardBlock, "type">,
-    ): GenericTemplateElement => ({
-      title: interpolate(card.title).slice(0, 80),
-      subtitle: card.subtitle
-        ? interpolate(card.subtitle).slice(0, 80)
-        : undefined,
-      image_url: card.image_url ? interpolate(card.image_url) : undefined,
-      default_action: card.default_url
-        ? { type: "web_url", url: interpolate(card.default_url) }
-        : undefined,
-      buttons: card.buttons.map((b) => {
-        if (b.type === "postback") {
-          return {
-            type: "postback" as const,
-            title: interpolate(b.label).slice(0, 20),
-            payload: interpolate(b.payload),
-          };
-        }
-        return {
-          type: "web_url" as const,
-          title: interpolate(b.label).slice(0, 20),
-          url: interpolate(b.url),
-        };
-      }),
-    });
-
-    let sent = 0;
-    for (let i = 0; i < blocks.length; i++) {
-      const block = blocks[i]!;
-      switch (block.type) {
-        case "text":
-          await this.sendText(recipientId, interpolate(block.text).slice(0, 1000));
-          break;
-        case "image":
-          await this.sendImage(recipientId, interpolate(block.url));
-          break;
-        case "card":
-          await this.sendGenericTemplate(recipientId, [
-            cardToElement({
-              title: block.title,
-              subtitle: block.subtitle,
-              image_url: block.image_url,
-              default_url: block.default_url,
-              buttons: block.buttons,
-            }),
-          ]);
-          break;
-        case "carousel":
-          await this.sendGenericTemplate(
-            recipientId,
-            block.cards.map(cardToElement),
-          );
-          break;
-        case "quick_replies":
-          await this.sendQuickReply(
-            recipientId,
-            interpolate(block.text).slice(0, 1000),
-            block.replies.map((r) => ({
-              content_type: "text" as const,
-              title: interpolate(r.label).slice(0, 20),
-              payload: interpolate(r.payload),
-            })),
-          );
-          break;
+    const actions=renderRichActions(recipientId,blocks,context);
+    for(const action of actions){
+      switch(action.type){
+        case 'text':await this.sendText(recipientId,action.text);break;
+        case 'image':await this.sendImage(recipientId,action.url);break;
+        case 'template':await this.sendGenericTemplate(recipientId,action.elements);break;
+        case 'quick_reply':await this.sendQuickReply(recipientId,action.text,action.replies);break;
       }
-      sent++;
-
     }
-    return { sentBlocks: sent };
+    return {sentBlocks:actions.length};
   }
 
   /**

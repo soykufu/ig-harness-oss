@@ -11,3 +11,6 @@ export { graphApiVersion } from './config.js';
 export type { GraphObservation, GraphUsage } from './usage.js';
 
 export { createAppSecretProof } from './proof.js';
+
+export {renderRichActions,richActionMessage} from './rich-actions.js';
+export type {RichAction} from './rich-actions.js';
