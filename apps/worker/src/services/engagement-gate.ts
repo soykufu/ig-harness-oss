@@ -1,3 +1,4 @@
+import {expandCommentCopy} from './comment-copy.js';
 import {recruitmentTemplateCopy} from './recruitment-template-copy.js';
 import {claimGateFollowupReceipt,prepareGateFollowupReceipt,uncertainGateFollowupReceipt,completeGateFollowupReceipt} from './recruitment-gate-followup-receipt.js';
 import type {RecruitmentEnrollmentGuard} from '@ig-harness/db';
@@ -139,7 +140,7 @@ export async function triggerGateForComment(
 
     if (!args.commentId || !args.accountId) throw new Error('Comment ID and owning account are required for private replies');
     const patterns = gate.comment_reply_text ? parseCommentReplyPatterns(gate.comment_reply_text) : [];
-    const reply = patterns.length ? patterns[Math.floor(Math.random() * patterns.length)]!.replace(/\{\{\s*username\s*\}\}/g,args.commenterUsername ?? '') : null;
+    const reply = patterns.length ? expandCommentCopy(patterns[Math.floor(Math.random() * patterns.length)]!,{username:args.commenterUsername ?? ''}) : null;
     await enqueueCommentRuleJob(db, {
       accountId: args.accountId, ruleId: `gate:${gate.id}`, commentId: args.commentId, followerId: args.follower.id,
       messageType: 'text', body: JSON.stringify({ text: `${gate.initial_dm_text}\n\n続けるには、このメッセージに返信してください。` }),

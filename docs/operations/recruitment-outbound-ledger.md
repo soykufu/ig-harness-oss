@@ -291,3 +291,7 @@ The bookmark proves availability of a recovery reference, not a restore-tested/e
 ### Public reply account-wide reconciliation (2026-11-21)
 
 The existing acknowledged-private-reply public-comment purpose also rechecks abandoned/future/old-owner/uncertain gate claims, stale or future SDK slots, future outgoing observations and any account gate outcome-unknown marker. Its private acknowledgement must have its durable matching observation. These conditions apply both to the atomic public claim and the final signed SDK mutation. Public replies still consume no second DM slot. This does not activate caption/comment mentions without a separately verified sender/purpose, and does not release a stop, receipt or inbound hold.
+
+### Literal comment substitutions (2026-11-21)
+
+Comment-rule DM source bodies and public reply/gate patterns now share one-pass lowercase variable substitution. `$&`, `$$`, prefix/suffix replacement instructions and template-looking strings inside substituted values stay literal, and inserted username/IGSID/follower values are never interpreted as another field in a later pass. Empty public text still disables that reply, NULL retains its existing default, and JSON/transport validation is still required. A stable queued gate-comment test verifies the exact selected public text without making a public or private network call. This is preparation code, not permission to activate public mentions or change approved live copy.

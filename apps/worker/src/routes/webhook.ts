@@ -1,3 +1,4 @@
+import {expandCommentCopy} from '../services/comment-copy.js';
 import {isRecruitmentDeliveryWindow,assertRecruitmentAutomationAdmission} from '../services/recruitment-automation-admission.js';
 import { readAppSecret, type CredentialEnv } from '../lib/credential-crypto.js';
 import { ingestRecruitmentInboundHolds, InvalidRecruitmentInbound, RecruitmentInboundBusy } from '../services/recruitment-inbound-holds.js';
@@ -688,10 +689,7 @@ async function handleCommentEvent(
 
     if (isMatch) {
       if (!accountId) throw new Error('Comment rule requires an account');
-      const expandedBody = rule.response_body
-        .replace(/\{\{igsid\}\}/g, senderId)
-        .replace(/\{\{username\}\}/g, value.from.username)
-        .replace(/\{\{follower_id\}\}/g, String(follower.id));
+      const expandedBody = expandCommentCopy(rule.response_body,{igsid:senderId,username:value.from.username,follower_id:String(follower.id)});
       const replyText = commentRulePublicReply(rule.reply_text, value.from.username);
       await enqueueCommentRuleJob(db, {
         accountId, ruleId: rule.id, commentId: value.id, followerId: follower.id,
@@ -908,5 +906,5 @@ export const DEFAULT_COMMENT_RULE_REPLY = '@{{username}} コメントありが�
 export function commentRulePublicReply(template: string | null | undefined, username: string): string | null {
   const text = template === null || template === undefined ? DEFAULT_COMMENT_RULE_REPLY : template;
   if (!text.trim()) return null;
-  return text.replace(/\{\{\s*username\s*\}\}/g, username);
+  return expandCommentCopy(text,{username});
 }
