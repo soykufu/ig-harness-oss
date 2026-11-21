@@ -17,6 +17,7 @@ const safe = text => privateValues.reduce((v, secret) => v.split(secret).join('[
 const cwd = fileURLToPath(new URL('../apps/worker/', import.meta.url));
 const configName = 'wrangler.soykufu.json';
 const configPath = `${cwd}${configName}`;
+let configCreated = false;
 async function api(path, body) {
   const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/${path}`, {
     method: body === undefined ? 'GET' : 'POST',
@@ -43,7 +44,12 @@ try {
   await verifyStopped();
   // Reject missing/drifted migrations before config writes, secret creation or deploy.
   // This read-only prerequisite does not replace backup/version/binding review.
-  await assertStoppedDeploySchema({repoDir:fileURLToPath(new URL('../',import.meta.url)),query:async sql=>(await api(`d1/database/${database}/query`,{sql}))[0]?.results??[]});
+  const readiness = await assertStoppedDeploySchema({repoDir:fileURLToPath(new URL('../',import.meta.url)),query:async sql=>(await api(`d1/database/${database}/query`,{sql}))[0]?.results??[]});
+  // Schema correctness is not backup or deployment authorization. The current
+  // reader intentionally does not grant either; do not silently ignore that.
+  if (readiness.backupVerified !== true || readiness.deploymentAuthorized !== true) {
+    throw new Error('Stopped deployment held: backup and deployment evidence require reconciliation');
+  }
   const databases = await api('d1/database?per_page=100');
   if (!databases.some(x => x.uuid === database && x.name === name)) throw new Error('Dedicated D1 identity mismatch');
   const buckets = await api('r2/buckets?per_page=100');
@@ -69,7 +75,8 @@ try {
     r2_buckets: [{ binding: 'IMAGES', bucket_name: name }],
     vars: { WORKER_URL: workerUrl, ADMIN_ORIGIN: workerUrl, MESSAGES_RETENTION_DAYS: '0', OUTBOUND_PREPARATION_LOCK: '1' },
     observability: { enabled: true },
-  }), { mode: 0o600 });
+  }), { mode: 0o600, flag: 'wx' });
+  configCreated = true;
   wrangler(['deploy','--keep-vars','--config',configName]);
   wrangler(['secret','bulk','--config',configName], JSON.stringify(secrets));
   // Read-only readiness checks may need to wait for a newly deployed version.
@@ -94,5 +101,5 @@ try {
   console.error(safe(error instanceof Error ? error.message : 'Deployment failed'));
   process.exitCode = 1;
 } finally {
-  await rm(configPath, { force: true });
+  if (configCreated) await rm(configPath, { force: true });
 }
