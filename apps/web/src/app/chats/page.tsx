@@ -342,7 +342,7 @@ function MessagePanel({ friendId, accountId, recipient, onBack }: {
           {checking ? '記録を確認中…' : '送信結果を確認'}
         </button>
         {deliveryNotice && <p role="status" className="mt-1 text-xs text-kumo-subtle">{deliveryNotice}</p>}
-        <HumanReplyPanel accountId={accountId} friendId={friendId} recipient={recipient} busy={sending || checking} onOpenChange={setHumanOpen} onSent={() => { setHumanPending(hasHumanReplyPending(accountId, friendId)); loadMessages() }} />
+        <HumanReplyPanel accountId={accountId} friendId={friendId} recipient={recipient} busy={sending || checking} operationLock={sendLockRef} onOpenChange={setHumanOpen} onSent={() => { setHumanPending(hasHumanReplyPending(accountId, friendId)); loadMessages() }} />
       </div>
     </div>
   )

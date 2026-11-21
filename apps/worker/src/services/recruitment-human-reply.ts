@@ -67,16 +67,33 @@ export async function finishHumanReplyContract(db:D1Database,accountId:string,ke
  if(result.meta.changes!==1)throw Error('Human reply outcome was not persisted');
 }
 
+/** Monotonic cancellation: retain the key as a tombstone and make its claim
+ * impossible, atomically, only while no delivery has started. No sender. */
+export async function cancelHumanReplyReview(db:D1Database,accountId:string,followerId:number,actorId:string,nonce:string):Promise<void>{
+ if(!Number.isSafeInteger(followerId)||followerId<1||!/^[A-Za-z0-9_-]{16,100}$/.test(nonce))throw Error('Invalid operation');
+ const key='human:'+await sha256(JSON.stringify([accountId,nonce]));
+ const row=await db.prepare(`UPDATE recruitment_human_reply_contracts SET expires_at_ms=created_at_ms
+ WHERE account_id=? AND follower_id=? AND actor_id=? AND operation_key=? AND status='prepared'
+ AND EXISTS(SELECT 1 FROM followers WHERE id=? AND account_id=?)
+ AND EXISTS(SELECT 1 FROM staff_members WHERE id=? AND is_active=1 AND role IN ('owner','admin'))
+ AND NOT EXISTS(SELECT 1 FROM data_deletion_locks WHERE account_id=?)
+ AND NOT EXISTS(SELECT 1 FROM recruitment_outbound_operations WHERE account_id=? AND operation_key GLOB ?)
+ RETURNING operation_key`)
+ .bind(accountId,followerId,actorId,key,followerId,accountId,actorId,accountId,accountId,key+':*').first();
+ if(!row)throw Error('Reply cannot be canceled safely');
+}
+
 /** Historical read only: missing evidence never means unsent or safe to retry. */
 export async function readHumanReplyStatus(db:D1Database,accountId:string,followerId:number,actorId:string,nonce:string){
  if(!/^[A-Za-z0-9_-]{16,100}$/.test(nonce))throw Error('Invalid operation nonce');
  const key='human:'+await sha256(JSON.stringify([accountId,nonce]));
- const row=await db.prepare(`SELECT h.status,h.owner_epoch,o.owner_epoch AS delivery_epoch,o.state,o.message_id
+ const row=await db.prepare(`SELECT h.status,h.owner_epoch,h.created_at_ms,h.expires_at_ms,EXISTS(SELECT 1 FROM recruitment_outbound_operations x WHERE x.account_id=h.account_id AND x.operation_key GLOB h.operation_key||':*') AS any_delivery,o.owner_epoch AS delivery_epoch,o.state,o.message_id
  FROM recruitment_human_reply_contracts h JOIN followers f ON f.id=h.follower_id AND f.account_id=h.account_id
  LEFT JOIN recruitment_outbound_operations o ON o.account_id=h.account_id AND o.operation_key=h.operation_key||':0'
  WHERE h.account_id=? AND h.follower_id=? AND h.actor_id=? AND h.operation_key=?
  AND EXISTS(SELECT 1 FROM staff_members WHERE id=? AND is_active=1 AND role IN ('owner','admin'))`)
- .bind(accountId,followerId,actorId,key,actorId).first<{status:string;owner_epoch:string;delivery_epoch:string|null;state:string|null;message_id:string|null}>();
+ .bind(accountId,followerId,actorId,key,actorId).first<{status:string;owner_epoch:string;created_at_ms:number;expires_at_ms:number;any_delivery:number;delivery_epoch:string|null;state:string|null;message_id:string|null}>();
  if(!row)return null;
- return{status:row.status,apiAcknowledged:row.status==='sent'&&row.state==='sent'&&!!row.message_id&&row.delivery_epoch===row.owner_epoch,mayRetry:false,automaticDeliveryResumed:false,recipientReceipt:'unknown'};
+ const canceled=row.status==='prepared'&&row.expires_at_ms===row.created_at_ms&&row.any_delivery===0;
+ return{status:row.status,canceled,mayCreateNewDraft:canceled,apiAcknowledged:row.status==='sent'&&row.state==='sent'&&!!row.message_id&&row.delivery_epoch===row.owner_epoch,mayRetry:false,automaticDeliveryResumed:false,recipientReceipt:'unknown'};
 }

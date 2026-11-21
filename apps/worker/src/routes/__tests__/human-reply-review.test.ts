@@ -57,3 +57,19 @@ it('never mistakes an uncertain or mismatched ledger for a confirmed reply',asyn
  sqlite.exec("UPDATE recruitment_outbound_operations SET owner_epoch='wrong'");expect(await(await status()).json()).toMatchObject({data:{apiAcknowledged:false,mayRetry:false}});
  sqlite.exec("UPDATE recruitment_human_reply_contracts SET status='uncertain'");expect(await(await status()).json()).toMatchObject({data:{status:'uncertain',apiAcknowledged:false,mayRetry:false}});
 });
+it('cancels only an unclaimed review, even with preparation and outbound locks retained',async()=>{
+ const {sqlite,post,status,env}=await fixture();const fetch=vi.fn();vi.stubGlobal('fetch',fetch);await post();env.OUTBOUND_PREPARATION_LOCK='1';env.RECRUITMENT_LEDGER_ENFORCEMENT='0';
+ const canceled=await post(1,'a','human-reply-cancel');expect(canceled.status).toBe(200);expect(canceled.headers.get('Cache-Control')).toBe('no-store');
+ expect(await canceled.json()).toMatchObject({data:{canceled:true,mayCreateNewDraft:true,mayRetry:false,automaticDeliveryResumed:false}});
+ expect(await(await status()).json()).toMatchObject({data:{canceled:true,mayCreateNewDraft:true,apiAcknowledged:false}});
+ env.RECRUITMENT_LEDGER_ENFORCEMENT='1';env.OUTBOUND_PREPARATION_LOCK='0';sqlite.exec("UPDATE integration_settings SET value='0'");
+ expect((await post(1,'a','human-replies')).status).toBe(409);expect((await post()).status).toBe(409);expect(fetch).not.toHaveBeenCalled();
+});
+it.each(['role','inactive','account','follower','claimed','uncertain','sent','missing','schema'])( 'does not release an unsafe cancellation: %s',async mode=>{
+ const {sqlite,post,status,setRole}=await fixture();const fetch=vi.fn();vi.stubGlobal('fetch',fetch);if(mode!=='missing')await post();
+ if(mode==='role')setRole('staff');if(mode==='inactive')sqlite.exec('UPDATE staff_members SET is_active=0');
+ if(['claimed','uncertain','sent'].includes(mode))sqlite.prepare('UPDATE recruitment_human_reply_contracts SET status=?').run(mode);
+ if(mode==='schema')sqlite.exec('DROP TABLE recruitment_human_reply_contracts');
+ const res=await post(mode==='follower'?2:1,mode==='account'?'b':'a','human-reply-cancel');expect(res.status).not.toBe(200);expect(fetch).not.toHaveBeenCalled();
+ if(!['missing','schema','role','inactive'].includes(mode))expect(await(await status()).json()).toMatchObject({data:{canceled:false,mayCreateNewDraft:false}});
+});

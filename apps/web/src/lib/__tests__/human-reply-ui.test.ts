@@ -105,3 +105,32 @@ it.each(['bad-response', 'auto-resumed'])('does not clear intent for invalid sen
   const f = fixture(); await f.c.review(); f.request.mockResolvedValueOnce({ success: true, data: { sent: mode === 'auto-resumed', automaticDeliveryResumed: mode === 'auto-resumed' } })
   await f.c.send(); expect(f.c.state.phase).toBe('held'); expect(f.records.size).toBe(1)
 })
+it('retains the nonce until cancellation is proven and requires an explicit new draft', async () => {
+  const f = fixture(); await f.c.review(); const nonce = JSON.parse(f.records.get(f.c.storageKey)!).nonce
+  f.request.mockResolvedValueOnce({ success: true, data: { canceled: true, mayCreateNewDraft: true, mayRetry: false, automaticDeliveryResumed: false } })
+  await f.c.cancel(); expect(f.c.state.phase).toBe('canceled'); expect(f.records.size).toBe(0)
+  expect(f.request.mock.calls.at(-1)?.[0]).toMatch(/human-reply-cancel$/)
+  expect(f.request.mock.calls.at(-1)?.[1].headers).toEqual({ 'Idempotency-Key': nonce })
+  await f.c.send(); await f.c.review(); expect(f.request).toHaveBeenCalledTimes(2)
+  f.c.newDraft(); expect(f.c.state.phase).toBe('idle')
+})
+it('does not send or create a new nonce if cancellation times out; reload checks the cancellation proof', async () => {
+  const f = fixture(); await f.c.review(); f.request.mockRejectedValueOnce(new Error('timeout')); await f.c.cancel()
+  expect(f.c.state.phase).toBe('held'); expect(f.records.size).toBe(1)
+  const c = f.create(); c.newDraft(); await c.send(); await c.review(); expect(f.request).toHaveBeenCalledTimes(2)
+  f.request.mockResolvedValueOnce({ success: true, data: { status: 'prepared', canceled: true, mayCreateNewDraft: true, mayRetry: false, automaticDeliveryResumed: false } })
+  await c.check(); expect(f.request.mock.calls.at(-1)?.[1].method).toBe('GET'); expect(c.state.phase).toBe('canceled')
+})
+it.each(['no-new-draft-proof', 'retry-granted', 'auto-resumed'])('does not discard pending intent for incomplete cancellation proof: %s', async mode => {
+  const f = fixture(); await f.c.review()
+  f.request.mockResolvedValueOnce({ success: true, data: { canceled: true, mayCreateNewDraft: mode !== 'no-new-draft-proof', mayRetry: mode === 'retry-granted', automaticDeliveryResumed: mode === 'auto-resumed' } })
+  await f.c.cancel(); expect(f.c.state.phase).toBe('held'); expect(f.records.size).toBe(1)
+})
+it('shares one synchronous lock with ordinary sending and releases it even on failure', async () => {
+  let locked = true
+  const f = fixture({ acquire: () => { if (locked) return false; locked = true; return true }, release: () => { locked = false } })
+  await f.c.review(); expect(f.request).not.toHaveBeenCalled()
+  locked = false; await f.c.review(); expect(locked).toBe(false)
+  locked = true; await f.c.send(); await f.c.cancel(); await f.c.check(); expect(f.request).toHaveBeenCalledTimes(1)
+  locked = false; f.request.mockRejectedValueOnce(new Error('offline')); await f.c.cancel(); expect(locked).toBe(false)
+})

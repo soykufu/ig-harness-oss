@@ -3,7 +3,7 @@ import {recruitmentMessageLifecycle} from '../recruitment-message-lifecycle.js';
 import {afterEach,it,expect,vi} from 'vitest';
 import {testDatabase} from '../../test-utils/d1.js';
 import {recruitmentSubjectHash} from '../recruitment-inbound-holds.js';
-import {prepareHumanReplyContract,claimHumanReplyContract,assertHumanReplyContract} from '../recruitment-human-reply.js';
+import {prepareHumanReplyContract,claimHumanReplyContract,assertHumanReplyContract,cancelHumanReplyReview,readHumanReplyStatus} from '../recruitment-human-reply.js';
 const NOW=Date.parse('2026-11-21T06:00:00Z');const close:(()=>void)[]=[];
 afterEach(()=>{while(close.length)close.pop()!();vi.unstubAllGlobals();});
 async function fixture(){const f=await testDatabase();close.push(()=>f.sqlite.close());
@@ -14,6 +14,37 @@ async function fixture(){const f=await testDatabase();close.push(()=>f.sqlite.cl
  add('old-stop','stopped',NOW-2000);add('question','consulting');
  const input={accountId:'a',followerId:1,actorId:'owner',nonce:'reviewed-action-123456',text:'ご質問への回答です'};
  return{...f,input,add};}
+it('cancels a prepared review while paused, preserves its key and prevents old preparation or claim forever',async()=>{
+ const {db,sqlite,input}=await fixture();await prepareHumanReplyContract(db,input,true,NOW);
+ sqlite.exec("UPDATE integration_settings SET value='1'");await cancelHumanReplyReview(db,'a',1,'owner',input.nonce);
+ expect(await readHumanReplyStatus(db,'a',1,'owner',input.nonce)).toMatchObject({canceled:true,mayCreateNewDraft:true,mayRetry:false,automaticDeliveryResumed:false});
+ sqlite.exec("UPDATE integration_settings SET value='0'");await expect(claimHumanReplyContract(db,input,true,NOW)).rejects.toThrow();await expect(prepareHumanReplyContract(db,input,true,NOW)).rejects.toThrow();
+ expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_human_reply_contracts').get()?.n).toBe(1);expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_inbound_holds').get()?.n).toBe(2);
+ await cancelHumanReplyReview(db,'a',1,'owner',input.nonce); // Same monotonic tombstone, no new permission.
+});
+it('settles concurrent cancellation and claim to exactly one winner',async()=>{
+ const {db,sqlite,input}=await fixture();await prepareHumanReplyContract(db,input,true,NOW);
+ const results=await Promise.allSettled([claimHumanReplyContract(db,input,true,NOW),cancelHumanReplyReview(db,'a',1,'owner',input.nonce)]);
+ expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);
+ const row=sqlite.prepare('SELECT status,created_at_ms,expires_at_ms FROM recruitment_human_reply_contracts').get();
+ if(row?.status==='claimed')expect(row.expires_at_ms).toBe(NOW+60000);else expect(row?.expires_at_ms).toBe(row?.created_at_ms);
+});
+it.each(['claimed','sent','uncertain','actor','account','follower','inactive','staff','deletion','ledger-slot'])( 'refuses cancellation when %s is not safely unclaimed',async mode=>{
+ const {db,sqlite,input}=await fixture();const key=await prepareHumanReplyContract(db,input,true,NOW);
+ if(['claimed','sent','uncertain'].includes(mode))sqlite.prepare('UPDATE recruitment_human_reply_contracts SET status=?').run(mode);
+ if(mode==='inactive')sqlite.exec('UPDATE staff_members SET is_active=0');if(mode==='staff')sqlite.exec("UPDATE staff_members SET role='staff'");
+ if(mode==='deletion')sqlite.exec("INSERT INTO data_deletion_locks(account_id,request_code) VALUES('a','test')");
+ if(mode==='ledger-slot')sqlite.prepare("INSERT INTO recruitment_outbound_operations(account_id,operation_key,owner_epoch,state,reserved_at_ms) VALUES('a',?,'epoch','uncertain',?)").run(key+':1',NOW);
+ await expect(cancelHumanReplyReview(db,mode==='account'?'b':'a',mode==='follower'?2:1,mode==='actor'?'other':'owner',input.nonce)).rejects.toThrow();
+ expect(sqlite.prepare('SELECT expires_at_ms FROM recruitment_human_reply_contracts').get()?.expires_at_ms).toBe(NOW+60000);
+});
+it('does not confuse expiry, missing rows or anomalous delivery slots with cancellation proof',async()=>{
+ const {db,sqlite,input}=await fixture();expect(await readHumanReplyStatus(db,'a',1,'owner',input.nonce)).toBeNull();
+ const key=await prepareHumanReplyContract(db,input,true,NOW);sqlite.prepare('UPDATE recruitment_human_reply_contracts SET created_at_ms=?,expires_at_ms=?').run(NOW-120000,NOW-60000);expect(await readHumanReplyStatus(db,'a',1,'owner',input.nonce)).toMatchObject({canceled:false,mayCreateNewDraft:false});
+ await cancelHumanReplyReview(db,'a',1,'owner',input.nonce);
+ sqlite.prepare("INSERT INTO recruitment_outbound_operations(account_id,operation_key,owner_epoch,state,reserved_at_ms) VALUES('a',?,'epoch','uncertain',?)").run(key+':1',NOW);
+ expect(await readHumanReplyStatus(db,'a',1,'owner',input.nonce)).toMatchObject({canceled:false,mayCreateNewDraft:false});
+});
 it('prepares and consumes one reviewed reply without clearing old stop or granting automatic delivery',async()=>{
  const {db,sqlite,input}=await fixture();const key=await prepareHumanReplyContract(db,input,true,NOW);expect(key).toMatch(/^human:[a-f0-9]{64}$/);
  await claimHumanReplyContract(db,input,true,NOW);await assertHumanReplyContract(db,input,key,true,NOW);

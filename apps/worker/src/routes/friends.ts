@@ -1,4 +1,4 @@
-import {prepareHumanReplyContract,claimHumanReplyContract,finishHumanReplyContract,readHumanReplyStatus} from '../services/recruitment-human-reply.js';
+import {prepareHumanReplyContract,claimHumanReplyContract,finishHumanReplyContract,readHumanReplyStatus,cancelHumanReplyReview} from '../services/recruitment-human-reply.js';
 import { recruitmentSubjectHash } from '../services/recruitment-inbound-holds.js';
 import { messagingEligibility } from '../services/messaging-window.js';
 import { Hono } from 'hono';
@@ -472,6 +472,19 @@ friends.post('/api/friends/:id/human-reply-review', requireRole('owner','admin')
   await prepareHumanReplyContract(c.env.DB,{accountId:account.id,followerId,actorId:c.get('staff').id,nonce:c.req.header('Idempotency-Key')??'',text:body.text},true);
   return c.json({success:true,data:{prepared:true,maySend:false,expiresInSeconds:60}});
  }catch{return c.json({success:false,error:'返信内容または受信状態を確認できません。送信せず確認を保留してください。'},409);}
+});
+
+friends.post('/api/friends/:id/human-reply-cancel', requireRole('owner','admin'), async c=>{
+ c.header('Cache-Control','no-store');
+ try{
+  const id=Number(c.req.param('id')),nonce=c.req.header('Idempotency-Key')??'';
+  if(!Number.isSafeInteger(id)||id<1||!/^[A-Za-z0-9_-]{16,100}$/.test(nonce))return c.json({success:false,error:'Invalid operation'},400);
+  const accountId=c.req.query('account_id');
+  const account=accountId?await c.env.DB.prepare('SELECT id FROM ig_accounts WHERE id=?').bind(accountId).first<{id:string}>():await c.env.DB.prepare('SELECT id FROM ig_accounts WHERE is_default=1 LIMIT 1').first<{id:string}>();
+  if(!account)return c.json({success:false,error:'not found'},404);
+  await cancelHumanReplyReview(c.env.DB,account.id,id,c.get('staff').id,nonce);
+  return c.json({success:true,data:{canceled:true,mayCreateNewDraft:true,mayRetry:false,automaticDeliveryResumed:false}});
+ }catch{return c.json({success:false,error:'安全に取り消せたか確認できません。再送せず返信結果を照合してください。'},409);}
 });
 
 friends.get('/api/friends/:id/human-reply-status', requireRole('owner','admin'), async c=>{

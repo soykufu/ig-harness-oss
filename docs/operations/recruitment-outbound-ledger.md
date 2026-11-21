@@ -4,9 +4,9 @@
 
 チャットの「相談に一回だけ返信する」は認証APIでowner/adminを確認した場合だけ表示する。宛先と本文の確認POSTと、一回だけ返信するPOSTを別ボタンに分け、Enterでは送らない。通常送信中は操作できず、確認画面を開いた間や確認待ちの返信がある間は通常送信も止める。アカウント切替時は一覧を再取得し、旧会話の画面と非同期処理を引き継がない。
 
-確認はリクエスト開始から最大60秒。本文変更・期限切れ・宛先切替・再読み込みで送信許可を復元しない。端末にはaccount/follower/認証済みactor別のnonceと本文ハッシュだけを最初のPOST前に保存し、本文は保存しない。通信失敗・404・prepared・uncertainは再送の根拠にならず、同じnonceで読み取り照合だけを行う。API応答と完了証拠が一致した場合だけ端末の待機記録を取り除く。確認のみで期限切れになった記録も、自動で新しいnonceを発行しない。安全な取り消し・再確認手順は別残件。
+確認はリクエスト開始から最大60秒。本文変更・期限切れ・宛先切替・再読み込みで送信許可を復元しない。端末にはaccount/follower/認証済みactor別のnonceと本文ハッシュだけを最初のPOST前に保存し、本文は保存しない。通信失敗・404・prepared・uncertainは再送の根拠にならず、同じnonceで読み取り照合だけを行う。API応答と完了証拠が一致した場合だけ端末の待機記録を取り除く。確認のみで期限切れになった記録も、自動で新しいnonceを発行しない。明示的な取り消しは、preparedかつ全送信スロットがゼロの同一account/follower/actor/nonceだけを単一SQLで永久失効する。キーは削除せず、claimと同時に成立しない。送信開始済み・sent・uncertain・削除処理中は拒否する。停止/準備ロック中でもこの無送信の操作は可能。取り消しの応答が不明ならGET照合だけを行い、失効の証拠が揃った後の明示的な「別の返信を作成」だけで新規本文へ進む。
 
-Web側の状態遷移25試験と型検査で検証する。完了確認後の「別の返信を作成」も明示操作だけで行い、不明結果を捨てて新規送信には進まない。実ブラウザの表示・タップ・Meta実機は未確認。本番配置、停止解除、受信保留解除、自動案内再開は行っていない。
+Web側の状態遷移31試験と型検査で検証する。完了確認後の「別の返信を作成」も明示操作だけで行い、不明結果を捨てて新規送信には進まない。実ブラウザの表示・タップ・Meta実機は未確認。本番配置、停止解除、受信保留解除、自動案内再開は行っていない。
 
 ## 今回の実装範囲
 
@@ -135,4 +135,4 @@ Follow-up connection in the same execution: a separate owner/admin-only POST hum
 
 Deletion coordination follow-up: the deletion route now treats claimed/uncertain human reply contracts as busy work, alongside the existing manual-intent and outbound ledger checks. Prepared contracts do not authorize a send and can be removed with the scoped follower. This is conservative retention until outcome reconciliation, not an automatic release mechanism.
 
-Human reply outcome readback: GET human-reply-status is owner/admin-only and binds the same account/follower/authenticated actor/nonce. It reads contracts and the sole outbound slot without creating defaults, sending, releasing capacity, retrying or clearing holds. Only sent contract plus same-epoch sent slot with message ID yields apiAcknowledged=true. Recipient receipt remains unknown and mayRetry=false for every result. Missing records/schema and a mismatched epoch cannot mean unsent. There is still no browser UI or live deployment.
+Human reply outcome readback: GET human-reply-status is owner/admin-only and binds the same account/follower/authenticated actor/nonce. It reads contracts and the sole outbound slot without creating defaults, sending, releasing capacity, retrying or clearing holds. Only sent contract plus same-epoch sent slot with message ID yields apiAcknowledged=true. Recipient receipt remains unknown and mayRetry=false for every result. Missing records/schema and a mismatched epoch cannot mean unsent. The source-only browser controls are described at the top; neither browser verification nor live deployment is established.
