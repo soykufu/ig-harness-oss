@@ -340,12 +340,12 @@ export async function enrollFriendInScenario(
       AND NOT EXISTS(SELECT 1 FROM data_deletion_locks WHERE account_id=f.account_id)
       AND NOT EXISTS(SELECT 1 FROM recruitment_inbound_holds WHERE account_id=f.account_id AND subject_hash=?)
       AND NOT EXISTS(SELECT 1 FROM recruitment_outbound_operations WHERE account_id=f.account_id AND (state='uncertain' OR reserved_at_ms>? OR (state='reserved' AND reserved_at_ms<=?)))
-      AND NOT EXISTS(SELECT 1 FROM recruitment_gate_followup_operations WHERE account_id=f.account_id AND state='uncertain')
- AND NOT EXISTS(SELECT 1 FROM recruitment_gate_cta_operations WHERE account_id=f.account_id AND state='uncertain')
-      AND NOT EXISTS(SELECT 1 FROM recruitment_gate_operations WHERE account_id=f.account_id AND state='uncertain')
+      AND NOT EXISTS(SELECT 1 FROM recruitment_gate_followup_operations WHERE account_id=f.account_id AND (state='uncertain' OR (state='claimed' AND (claimed_at_ms<=? OR claimed_at_ms>? OR owner_epoch!=c.owner_epoch))))
+ AND NOT EXISTS(SELECT 1 FROM recruitment_gate_cta_operations WHERE account_id=f.account_id AND (state='uncertain' OR (state='claimed' AND (claimed_at_ms<=? OR claimed_at_ms>? OR owner_epoch!=c.owner_epoch))))
+      AND NOT EXISTS(SELECT 1 FROM recruitment_gate_operations WHERE account_id=f.account_id AND (state='uncertain' OR (state='claimed' AND (claimed_at_ms<=? OR claimed_at_ms>? OR owner_epoch!=c.owner_epoch))))
       AND NOT EXISTS(SELECT 1 FROM comment_rule_jobs WHERE account_id=f.account_id AND public_reply_status IN ('processing','uncertain'))
       AND NOT EXISTS(SELECT 1 FROM gate_deliveries d JOIN engagement_gates g ON g.id=d.gate_id WHERE g.account_id=f.account_id AND d.end_reason='outcome_unknown'))`;
-    const bindings=[scenarioId,recruitment.ownerEpoch,at-60000,at,friendId,recruitment.accountId,recruitment.metadata,new Date(at-86400000).toISOString(),new Date(at).toISOString(),at-300000,at,at,recruitment.subjectHash,at,at-60000];
+    const bindings=[scenarioId,recruitment.ownerEpoch,at-60000,at,friendId,recruitment.accountId,recruitment.metadata,new Date(at-86400000).toISOString(),new Date(at).toISOString(),at-300000,at,at,recruitment.subjectHash,at,at-60000,at-60000,at,at-60000,at,at-60000,at];
     const row=await db.prepare(`INSERT INTO follower_scenarios(follower_id,scenario_id,current_step,status,enrolled_at,next_step_at,updated_at)
       SELECT ?,?,0,?,?,?,? WHERE ${eligible} AND NOT EXISTS(SELECT 1 FROM follower_scenarios WHERE follower_id=? AND scenario_id=?) RETURNING *`)
       .bind(friendId,scenarioId,firstStep?'active':'completed',now,next,now,...bindings,friendId,scenarioId).first<FriendScenario>();

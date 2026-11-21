@@ -1,0 +1,21 @@
+import {afterEach,it,expect,vi} from 'vitest';
+import {enrollFriendInScenario} from '@ig-harness/db';
+import {gateFixture} from '../../test-utils/gate-fixture.js';
+import {reserveRecruitmentOutbound,assertRecruitmentReservationReady} from '../recruitment-outbound-ledger.js';
+import {assertRecruitmentAutomationAdmission,recruitmentAdmissionPredicate} from '../recruitment-automation-admission.js';
+const NOW=Date.parse('2026-11-21T06:00:00Z'),close:(()=>void)[]=[];
+afterEach(()=>{while(close.length)close.pop()!();vi.useRealTimers();});
+const tables=['recruitment_gate_operations','recruitment_gate_followup_operations','recruitment_gate_cta_operations'] as const;
+async function fixture(){vi.useFakeTimers();vi.setSystemTime(NOW);const f=await gateFixture();close.push(()=>f.sqlite.close());f.addGate();f.sqlite.exec("INSERT INTO gate_deliveries(id,gate_id,follower_id,igsid,status) VALUES('d','g',1,'user-1','delivered'); INSERT INTO integration_settings(key,value) VALUES('outbound_paused','0'); INSERT INTO scenarios(id,name,trigger_type,account_id,is_active) VALUES(1,'test','manual','a',1); INSERT INTO scenario_steps(id,scenario_id,step_order,delay_minutes,message_type,body) VALUES(1,1,1,0,'text','{}'); INSERT INTO ig_accounts(id,ig_user_id,access_token,created_at,updated_at) VALUES('b','222','test','2026-01-01','2026-01-01')");
+ for(const id of ['a','b'])f.sqlite.prepare("INSERT INTO recruitment_outbound_control VALUES(?,'epoch','harness',?)").run(id,NOW);
+ f.sqlite.prepare('UPDATE followers SET last_inbound_at=?,metadata=?').run(new Date(NOW-1000).toISOString(),JSON.stringify({recruitment_delivery:{state:'active',owner_epoch:'epoch',observed_at_ms:NOW,valid_until_ms:NOW+300000}}));
+ const snapshot=await assertRecruitmentAutomationAdmission(f.db,'a',1,NOW);const request={accountId:'a',operationKey:'ready-slot',ownerEpoch:'epoch',nowMs:NOW,preparationLocked:false};expect(await reserveRecruitmentOutbound(f.db,request)).toBe(true);return{...f,snapshot,request};}
+for(const table of tables)it.each(['stale','boundary','future','other-owner','uncertain','fresh','settled'])(`${table} %s gates admission, atomic enrollment and the final transport boundary`,async mode=>{
+ const f=await fixture();const common={account_id:'a',operation_key:'pending-purpose',delivery_id:'d',follower_id:1,definition_version:'d'.repeat(64),owner_epoch:mode==='other-owner'?'old':'epoch',claimed_at_ms:mode==='stale'?NOW-60001:mode==='boundary'?NOW-60000:mode==='future'?NOW+1:NOW,state:mode==='settled'?'sent':mode==='uncertain'?'uncertain':'claimed'};
+ const extra=table==='recruitment_gate_operations'?{event_key:'event',phase:'reward',loop_count:0}:table==='recruitment_gate_followup_operations'?{step_index:0}:{event_key:'event',mode:'keyword',source_hash:'s'.repeat(64),payload_version:'p'.repeat(64),expected_messages:1};const row={...common,...extra};f.sqlite.prepare(`INSERT INTO ${table}(${Object.keys(row).join(',')}) VALUES(${Object.keys(row).map(()=>'?').join(',')})`).run(...Object.values(row));
+ const blocked=!['fresh','settled'].includes(mode);expect(await reserveRecruitmentOutbound(f.db,{...f.request,operationKey:'new-slot'})).toBe(!blocked);
+ const before=assertRecruitmentAutomationAdmission(f.db,'a',1,NOW);const final=assertRecruitmentReservationReady(f.db,f.request);if(blocked){await expect(before).rejects.toThrow('reconciliation');await expect(final).rejects.toThrow('eligible');}else{await before;await final;}
+ const predicate=recruitmentAdmissionPredicate('a',1,f.snapshot,NOW);expect(!!await f.db.prepare('SELECT 1 WHERE '+predicate.sql).bind(...predicate.bindings).first()).toBe(!blocked);
+ if(blocked){await expect(enrollFriendInScenario(f.db,1,'1',f.snapshot)).rejects.toThrow('reconciliation');expect(f.sqlite.prepare('SELECT COUNT(*) n FROM follower_scenarios').get()?.n).toBe(0);}else{await enrollFriendInScenario(f.db,1,'1',f.snapshot);expect(f.sqlite.prepare('SELECT COUNT(*) n FROM follower_scenarios').get()?.n).toBe(1);}
+ expect(await reserveRecruitmentOutbound(f.db,{...f.request,accountId:'b',operationKey:'isolated'})).toBe(true);expect(f.sqlite.prepare(`SELECT state,claimed_at_ms,owner_epoch FROM ${table}`).get()).toEqual({state:common.state,claimed_at_ms:common.claimed_at_ms,owner_epoch:common.owner_epoch});
+});
