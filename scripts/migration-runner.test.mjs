@@ -67,3 +67,11 @@ test('adopts legacy repeat-delivery history without recreating the removed uniqu
   assert.equal(db.prepare('SELECT COUNT(*) n FROM ig_schema_migrations').get().n, 31);
   db.close();
 });
+
+for(const table of ['recruitment_echo_receipts','recruitment_inbound_holds'])test(`refuses false readiness when ${table} is absent despite an applied ledger`,async()=>{
+ const db=new DatabaseSync(':memory:');
+ try {
+  await applyMigrations(adapter(db));db.exec(`DROP TABLE ${table}`);
+  await assert.rejects(applyMigrations(adapter(db)),new RegExp('Schema verification failed: '+table));
+ } finally {db.close();}
+});

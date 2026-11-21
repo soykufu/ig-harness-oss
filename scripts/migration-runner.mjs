@@ -149,6 +149,8 @@ export async function verifyLatestSchema(query) {
     media_posts: ['phase','phase_started_at','child_creation_ids'],
     admin_sessions: ['id_hash','staff_id','credential_hash','csrf_hash','expires_at'],
     recruitment_manual_intents: ['account_id','operation_key','follower_id','body_hash','owner_epoch','status','created_at_ms'],
+    recruitment_echo_receipts: ['account_id','message_id','sent_at_ms','first_received_at_ms','last_received_at_ms'],
+    recruitment_inbound_holds: ['account_id','event_key','subject_hash','state','occurred_at_ms','recorded_at_ms'],
     recruitment_outbound_control: ['account_id','owner_epoch','owner','reconciled_at_ms'],
     recruitment_outbound_operations: ['account_id','operation_key','owner_epoch','reserved_at_ms','state','message_id'],
     recruitment_outbound_observations: ['account_id','message_id','sent_at_ms','observed_at_ms'],
