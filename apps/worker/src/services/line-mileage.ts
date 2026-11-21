@@ -24,6 +24,8 @@ export async function forwardLinkedInstagramEngagement(
   db: D1Database,
   input: {
     followerId: number;
+    accountId?:string;
+    recruitmentEnforced?:boolean;
     eventType: InstagramMileageEventType;
     sourceEventId: string;
     subjectKey?: string | null;
@@ -31,9 +33,12 @@ export async function forwardLinkedInstagramEngagement(
   },
   fetchImpl: MileageFetch = (url, init) => fetch(url, init),
 ): Promise<boolean> {
+  // The signed IG-to-LINE handoff and destination mapping are not yet
+  // verified. Enforced preparation never forwards via the legacy fallback.
+  if(input.recruitmentEnforced)return false;
   const follower = await db
-    .prepare('SELECT line_friend_uuid FROM followers WHERE id = ?')
-    .bind(input.followerId)
+    .prepare('SELECT line_friend_uuid FROM followers WHERE id = ? AND (? IS NULL OR account_id=?)')
+    .bind(input.followerId,input.accountId??null,input.accountId??null)
     .first<{ line_friend_uuid: string | null }>();
   if (!follower?.line_friend_uuid) return false;
 
@@ -65,14 +70,16 @@ export async function forwardLinkedInstagramEngagement(
         },
       );
       if (response.ok) return true;
-      // A UUID linked to another registered Harness returns 404. Continue to
-      // the next connection; all other failures are also best-effort so the
-      // Instagram webhook itself is never rejected because mileage is down.
+      // Only an explicit missing recipient may use the historical 404
+      // lookup. Authorization failures, 1010 pages, rate limits and unknown
+      // server outcomes must never be redirected to another connection.
       console.warn(
         `[line-mileage] forward failed status=${response.status} connection=${connection.id}`,
       );
+      if(response.status!==404)return false;
     } catch (error) {
       console.warn(`[line-mileage] network failure connection=${connection.id}`, error);
+      return false;
     }
   }
   return false;

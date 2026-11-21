@@ -237,6 +237,7 @@ async function handleReactionEvent(
   const follower = await getFriendByIgsid(db, senderId);
   if (!follower) return;
   await forwardLinkedInstagramEngagement(db, {
+    accountId,recruitmentEnforced:igAccount?.recruitmentEnforced===true,
     followerId: follower.id,
     eventType: 'instagram_message_reacted',
     sourceEventId: `${accountId ?? 'default'}:${value.reaction?.mid ?? 'reaction'}`,
@@ -326,6 +327,7 @@ export async function handleMessagingEvent(
   const inboundId = event.message?.mid ?? event.postback?.mid;
   if (inboundId) {
     await forwardLinkedInstagramEngagement(db, {
+    accountId,recruitmentEnforced:!!clientForOperation||igAccount?.recruitmentEnforced===true,
       followerId: follower.id,
       eventType: 'instagram_dm_received',
       sourceEventId: `${accountId ?? 'default'}:${inboundId}`,
@@ -353,6 +355,7 @@ export async function handleMessagingEvent(
       .bind(follower.id, JSON.stringify({ text: event.message?.text ?? '', kind: 'story_reply', story }))
       .run();
     await forwardLinkedInstagramEngagement(db, {
+    accountId,recruitmentEnforced:!!clientForOperation||igAccount?.recruitmentEnforced===true,
       followerId: follower.id,
       eventType: 'instagram_story_replied',
       sourceEventId: `${accountId ?? 'default'}:story:${event.message?.mid ?? senderId}`,
@@ -380,6 +383,7 @@ export async function handleMessagingEvent(
     await db.prepare(`INSERT INTO messages_log (follower_id, direction, message_type, body, trigger_source) VALUES (?, 'in', 'text', ?, NULL)`)
       .bind(follower.id, JSON.stringify({ text: '', kind: 'messaging_referral', ref, source: event.referral.source ?? null })).run();
     await forwardLinkedInstagramEngagement(db, {
+    accountId,recruitmentEnforced:!!clientForOperation||igAccount?.recruitmentEnforced===true,
       followerId: follower.id,
       eventType: 'instagram_referral_received',
       sourceEventId: `${accountId ?? 'default'}:ref:${ref}`,
@@ -584,6 +588,7 @@ async function handleCommentEvent(
   if (accountId && follower.account_id !== accountId) throw new Error('Follower account mismatch');
 
   await forwardLinkedInstagramEngagement(db, {
+    accountId,recruitmentEnforced:igAccount?.recruitmentEnforced===true,
     followerId: follower.id,
     eventType: 'instagram_comment_created',
     sourceEventId: `${accountId ?? 'default'}:${value.id}`,
@@ -757,6 +762,7 @@ async function handleMentionEvent(
   // Engagement forwarding runs regardless of DM eligibility — a caption/media
   // mention still counts as an engagement even when messaging isn't eligible.
   await forwardLinkedInstagramEngagement(db, {
+    accountId,recruitmentEnforced:!!clientForOperation||igAccount?.recruitmentEnforced===true,
     followerId: follower.id,
     eventType: 'instagram_story_mentioned',
     sourceEventId: sourceEventId ?? `${accountId ?? 'default'}:${mentionerId}:${value.media_id ?? 'mention'}`,
@@ -784,6 +790,8 @@ async function handleMentionEvent(
     if(clientForOperation)throw err;
   }
 
+  // No unbound fallback purpose in the enforced preparation path.
+  if(clientForOperation)return;
   // Send thank you DM (fallback when no gate matches)
   try {
     await igClient.sendText(
@@ -849,6 +857,8 @@ async function handleMentionContentEvent(
   // Operator stop switch: record but never auto-reply while paused.
   if (await isOutboundPaused(db)) return;
 
+  // Public mention replies have no stable signed purpose contract yet.
+  if(igAccount?.recruitmentEnforced)return;
   // Comment rules (media filter + keyword) — same precedence as comments.
   if (!accountId) return;
   const rules = await db.prepare(

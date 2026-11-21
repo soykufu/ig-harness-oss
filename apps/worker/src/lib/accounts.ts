@@ -179,8 +179,8 @@ export function pickAccountForEntry(accounts: IgAccount[], entryId: string): IgA
   return active.length === 1 ? active[0]! : null;
 }
 
-export function toIgAccountRef(account: IgAccount, env?: CredentialEnv): IgAccountRef {
-  return { id: account.ig_user_id, username: account.username ?? undefined, ...(env ? { security: env } : {}) };
+export function toIgAccountRef(account: IgAccount, env?: CredentialEnv & {RECRUITMENT_LEDGER_ENFORCEMENT?:string}): IgAccountRef {
+  return { id: account.ig_user_id, username: account.username ?? undefined,...(env?.RECRUITMENT_LEDGER_ENFORCEMENT==='1'?{recruitmentEnforced:true}:{}), ...(env ? { security: env } : {}) };
 }
 
 /** Per-account client. Refreshes the token in-band when it is near expiry. */

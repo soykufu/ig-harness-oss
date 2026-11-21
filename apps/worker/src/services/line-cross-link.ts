@@ -20,6 +20,7 @@ export interface IgAccountRef {
   id?: string;
   username?: string;
   security?: CredentialEnv;
+  recruitmentEnforced?:boolean;
 }
 
 /**

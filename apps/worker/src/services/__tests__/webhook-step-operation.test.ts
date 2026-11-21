@@ -1,8 +1,9 @@
 import {afterEach,it,expect,vi} from 'vitest';
 import {gateFixture} from '../../test-utils/gate-fixture.js';
 import {handleMessagingEvent} from '../../routes/webhook.js';
-const close:(()=>void)[]=[];afterEach(()=>{while(close.length)close.pop()!();});
+const close:(()=>void)[]=[];afterEach(()=>{while(close.length)close.pop()!();vi.useRealTimers();});
 it.each(['primary','standby','paused'])('uses a version-bound immediate step client for %s inbox events',async mode=>{
+ vi.useFakeTimers();vi.setSystemTime(Date.parse('2026-11-21T06:00:00Z'));
  const f=await gateFixture();close.push(()=>f.sqlite.close());
  f.sqlite.exec("INSERT INTO scenarios(id,name,trigger_type,trigger_keyword,account_id) VALUES(1,'test','dm_keyword','guide','a'); INSERT INTO scenario_steps(id,scenario_id,step_order,delay_minutes,message_type,body) VALUES(1,1,1,0,'text','{\"text\":\"test\"}')");
  const now=Date.now();f.sqlite.prepare("INSERT INTO recruitment_outbound_control VALUES('a','epoch','harness',?)").run(now);f.sqlite.prepare('UPDATE followers SET metadata=?').run(JSON.stringify({recruitment_delivery:{state:'active',owner_epoch:'epoch',observed_at_ms:now,valid_until_ms:now+300000}}));
