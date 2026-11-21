@@ -18,7 +18,7 @@ async function evidence(db:D1Database,input:HumanReplyInput,now:number){
  const subject=await recruitmentSubjectHash(input.accountId,row.igsid);
  const snapshot=(await db.prepare(SNAPSHOT).bind(input.accountId,subject).first<{snapshot:string}>())?.snapshot;
  const events=JSON.parse(snapshot??'[]') as {key:string;state:string;at:number;seen:number}[];
- const latest=Math.max(...events.map(e=>e.at));
+ const latest=events.reduce((max,e)=>Math.max(max,e.at),-Infinity);
  if(!events.length||latest>now||latest<=now-86400000||events.some(e=>e.seen>now||e.at>now||e.at<0||e.seen<e.at)||events.filter(e=>e.at===latest).some(e=>e.state!=='consulting'))throw Error('Latest inbound is not a reviewed consultation');
  return{key:'human:'+await sha256(JSON.stringify([input.accountId,input.nonce])),subject,snapshot:snapshot!,inboundHash:await sha256(snapshot!),bodyHash:await sha256(input.text),epoch:row.owner_epoch};
 }
@@ -60,4 +60,9 @@ export async function assertHumanReplyContract(db:D1Database,input:HumanReplyInp
  AND NOT EXISTS(SELECT 1 FROM data_deletion_locks WHERE account_id=?)`)
  .bind(input.accountId,key,input.followerId,input.actorId,e.bodyHash,e.inboundHash,e.epoch,now,now,input.accountId,e.subject,e.snapshot,input.actorId,input.accountId,e.epoch,now-60000,now,input.accountId).first():null;
  if(!row)throw Error('Human reply contract no longer matches');
+}
+
+export async function finishHumanReplyContract(db:D1Database,accountId:string,key:string,status:'sent'|'uncertain'):Promise<void>{
+ const result=await db.prepare("UPDATE recruitment_human_reply_contracts SET status=? WHERE account_id=? AND operation_key=? AND status='claimed'").bind(status,accountId,key).run();
+ if(result.meta.changes!==1)throw Error('Human reply outcome was not persisted');
 }

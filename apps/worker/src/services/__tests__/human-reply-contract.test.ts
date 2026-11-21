@@ -1,9 +1,11 @@
-import {afterEach,it,expect} from 'vitest';
+import {InstagramClient} from '@ig-harness/ig-sdk';
+import {recruitmentMessageLifecycle} from '../recruitment-message-lifecycle.js';
+import {afterEach,it,expect,vi} from 'vitest';
 import {testDatabase} from '../../test-utils/d1.js';
 import {recruitmentSubjectHash} from '../recruitment-inbound-holds.js';
 import {prepareHumanReplyContract,claimHumanReplyContract,assertHumanReplyContract} from '../recruitment-human-reply.js';
 const NOW=Date.parse('2026-11-21T06:00:00Z');const close:(()=>void)[]=[];
-afterEach(()=>{while(close.length)close.pop()!();});
+afterEach(()=>{while(close.length)close.pop()!();vi.unstubAllGlobals();});
 async function fixture(){const f=await testDatabase();close.push(()=>f.sqlite.close());
  f.sqlite.exec("INSERT INTO ig_accounts(id,ig_user_id,access_token,created_at,updated_at) VALUES('a','111','test','2026-01-01','2026-01-01'); INSERT INTO staff_members(id,name,role,api_key,is_active) VALUES('owner','test','owner','test',1),('other','test','admin','other',1); INSERT INTO followers(id,igsid,account_id) VALUES(1,'student','a'); INSERT INTO integration_settings(key,value) VALUES('outbound_paused','0')");
  f.sqlite.prepare('UPDATE followers SET last_inbound_at=?').run(new Date(NOW-1000).toISOString());f.sqlite.prepare("INSERT INTO recruitment_outbound_control VALUES('a','epoch','harness',?)").run(NOW);
@@ -48,4 +50,15 @@ it.each(['paused','revoked','new-stop','deleted','owner-change'])('rejects final
  const {db,sqlite,input,add}=await fixture();const key=await prepareHumanReplyContract(db,input,true,NOW);await claimHumanReplyContract(db,input,true,NOW);
  if(mode==='paused')sqlite.exec("UPDATE integration_settings SET value='1'");if(mode==='revoked')sqlite.exec("UPDATE staff_members SET is_active=0");if(mode==='new-stop')add('stop-now','stopped',NOW);if(mode==='deleted')sqlite.exec('DELETE FROM followers');if(mode==='owner-change')sqlite.exec("UPDATE recruitment_outbound_control SET owner='legacy'");
  await expect(assertHumanReplyContract(db,input,key,true,NOW)).rejects.toThrow();
+});
+
+it.each(['valid','new-stop','new-consult','actor-revoked','changed-text','other-recipient','image','second-block'])( 'enforces the reviewed contract at the real SDK boundary: %s',async mode=>{
+ const {db,sqlite,input,add}=await fixture();const key=await prepareHumanReplyContract(db,input,true,NOW);await claimHumanReplyContract(db,input,true,NOW);
+ const fetch=vi.fn(async()=>new Response(JSON.stringify({message_id:'one',recipient_id:'student'})));vi.stubGlobal('fetch',fetch);
+ const client=new InstagramClient({accessToken:'test',igUserId:'111',messageLifecycle:recruitmentMessageLifecycle(db,'a',{key,ownerEpoch:'epoch',humanReply:input},async()=>{},()=>NOW),transformMessage:async(_id,message)=>{
+  if(mode==='new-stop')add('new','stopped',NOW);if(mode==='new-consult')add('new','consulting',NOW);if(mode==='actor-revoked')sqlite.exec("UPDATE staff_members SET is_active=0");return message;
+ }});
+ const send=mode==='image'?client.sendImage('student','https://example.com/a.jpg'):mode==='second-block'?client.sendRichMessage('student',[{type:'text',text:input.text},{type:'text',text:input.text}]):client.sendText(mode==='other-recipient'?'foreign':'student',mode==='changed-text'?'changed':input.text);
+ if(mode==='valid')await send;else await expect(send).rejects.toThrow();expect(fetch).toHaveBeenCalledTimes(['valid','second-block'].includes(mode)?1:0);
+ expect(sqlite.prepare("SELECT COUNT(*) n FROM recruitment_inbound_holds WHERE state='stopped'").get()?.n).toBeGreaterThan(0);
 });

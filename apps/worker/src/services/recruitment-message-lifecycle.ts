@@ -1,3 +1,4 @@
+import {assertHumanReplyContract,type HumanReplyInput} from './recruitment-human-reply.js';
 import {assertRecruitmentBroadcastReady} from './recruitment-broadcast-admission.js';
 import { assertRecruitmentStepReady } from './recruitment-step-admission.js';
 import { assertRecruitmentBusinessState } from './recruitment-business-state.js';
@@ -13,7 +14,7 @@ import { messagingEligibility } from './messaging-window.js';
  * Do not generate a new operation key to retry a failed/unknown delivery.
  */
 export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
-  operation: { key: string; ownerEpoch: string; definitionVersion?: string } | undefined,
+  operation: { key: string; ownerEpoch: string; definitionVersion?: string; humanReply?: HumanReplyInput } | undefined,
   guard: () => Promise<void>, now = Date.now): MessageLifecycle {
   let slot = 0;
   let failed = false;
@@ -27,6 +28,13 @@ export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
       try {
         await guard();
         const nowMs = now();
+        if(operation.humanReply){
+          const reply=operation.humanReply;const message=payload.message as Record<string,unknown>|undefined;
+          if(slot!==0||reply.accountId!==accountId||!payload.recipient?.id||payload.recipient.comment_id||!message||Object.keys(message).length!==1||message.text!==reply.text)throw Error('Human reply payload does not match review');
+          const target=await db.prepare('SELECT igsid FROM followers WHERE id=? AND account_id=?').bind(reply.followerId,accountId).first<{igsid:string}>();
+          if(target?.igsid!==payload.recipient.id)throw Error('Human reply recipient changed');
+          await assertHumanReplyContract(db,reply,operation.key,true,nowMs);
+        }
         const hour = new Date(nowMs + 9 * 3_600_000).getUTCHours();
         if (hour < 8 || hour >= 21) throw new Error('Outside recruitment delivery window');
         const key = `${operation.key}:${slot++}`;
@@ -52,8 +60,13 @@ export function recruitmentMessageLifecycle(db: D1Database, accountId: string,
         if (!follower || await messagingEligibility(db,follower.id,accountId,nowMs)!=='eligible') throw new Error('Recruitment recipient is not eligible');
         if (operation.key.startsWith('step:')) await assertRecruitmentStepReady(db, accountId, follower.id, operation.key, operation.definitionVersion);
         if (operation.key.startsWith('broadcast:')) await assertRecruitmentBroadcastReady(db,accountId,follower.id,operation.key,operation.definitionVersion,nowMs);
-        assertRecruitmentBusinessState(follower.metadata, operation.ownerEpoch, nowMs);
-        await assertNoRecruitmentInboundHold(db,accountId,expectedRecipient);
+        if(operation.humanReply){
+          if(operation.humanReply.followerId!==follower.id)throw Error('Human reply recipient changed');
+          await assertHumanReplyContract(db,operation.humanReply,operation.key,true,nowMs);
+        }else{
+          assertRecruitmentBusinessState(follower.metadata, operation.ownerEpoch, nowMs);
+          await assertNoRecruitmentInboundHold(db,accountId,expectedRecipient);
+        }
       } else if(expectedCommentId) {
         expectedRecipient=await assertRecruitmentPrivateReplyReady(db,accountId,expectedCommentId,operation,nowMs);
       } else { throw new Error('Recruitment recipient identity missing'); }

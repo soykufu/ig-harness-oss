@@ -4,13 +4,14 @@ import type {Env} from '../../index.js';
 import {friends} from '../friends.js';
 import {testDatabase} from '../../test-utils/d1.js';
 import {recruitmentSubjectHash} from '../../services/recruitment-inbound-holds.js';
-const close:(()=>void)[]=[];afterEach(()=>{while(close.length)close.pop()!();vi.restoreAllMocks();});
+const close:(()=>void)[]=[];afterEach(()=>{while(close.length)close.pop()!();vi.restoreAllMocks();vi.unstubAllGlobals();});
 async function fixture(){const {db,sqlite}=await testDatabase();close.push(()=>sqlite.close());const now=Date.now();vi.spyOn(Date,'now').mockReturnValue(now);
  sqlite.exec("INSERT INTO ig_accounts(id,ig_user_id,access_token,is_default,created_at,updated_at) VALUES('a','111','test',1,'2026-01-01','2026-01-01'),('b','222','test',0,'2026-01-01','2026-01-01'); INSERT INTO followers(id,igsid,account_id) VALUES(1,'student','a'),(2,'foreign','b'); INSERT INTO staff_members(id,name,role,api_key) VALUES('owner','test','owner','test'); INSERT INTO integration_settings(key,value) VALUES('outbound_paused','1')");
  sqlite.prepare('UPDATE followers SET last_inbound_at=?').run(new Date(now).toISOString());sqlite.prepare("INSERT INTO recruitment_outbound_control VALUES('a','epoch','harness',?)").run(now);sqlite.prepare("INSERT INTO recruitment_inbound_holds VALUES('a','in',?,'consulting',?,?)").run(await recruitmentSubjectHash('a','student'),now,now);
  let role='owner';const app=new Hono<Env>().use('*',async(c,next)=>{c.set('staff',{id:'owner',name:'test',role} as never);await next();}).route('/',friends);
- const env={DB:db,RECRUITMENT_LEDGER_ENFORCEMENT:'1'};
- const post=(id=1,account='a')=>app.fetch(new Request(`https://test.invalid/api/friends/${id}/human-reply-review?account_id=${account}`,{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':'operator-action-123456'},body:JSON.stringify({text:'相談への回答',actorId:'injected'})}),env);
+ sqlite.exec("UPDATE ig_accounts SET token_expires_at='2030-01-01T00:00:00Z'");
+ const env={DB:db,RECRUITMENT_LEDGER_ENFORCEMENT:'1',OUTBOUND_PREPARATION_LOCK:'0'};
+ const post=(id=1,account='a',kind='human-reply-review',text='相談への回答')=>app.fetch(new Request(`https://test.invalid/api/friends/${id}/${kind}?account_id=${account}`,{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':'operator-action-123456'},body:JSON.stringify({text,actorId:'injected'})}),env);
  return {db,sqlite,post,env,setRole:(r:string)=>{role=r;}};}
 it('prepares only a draft using the authenticated actor while paused, with no send or resume',async()=>{
  const {sqlite,post}=await fixture();const res=await post();expect(res.status).toBe(200);expect(res.headers.get('Cache-Control')).toBe('no-store');expect(await res.json()).toMatchObject({data:{prepared:true,maySend:false}});
@@ -21,4 +22,22 @@ it('requires both the authenticated role and the current active DB role, enforci
 });
 it('keeps default-disabled or missing-schema state from granting preparation or sending',async()=>{
  const {sqlite,post,env}=await fixture();env.RECRUITMENT_LEDGER_ENFORCEMENT='0';expect((await post()).status).toBe(409);env.RECRUITMENT_LEDGER_ENFORCEMENT='1';sqlite.exec('DROP TABLE recruitment_human_reply_contracts');expect((await post()).status).toBe(409);expect(sqlite.prepare('SELECT COUNT(*) n FROM messages_log').get()?.n).toBe(0);
+});
+
+it('sends one reviewed text only, preserving holds and preventing repeat claims',async()=>{
+ const {sqlite,post}=await fixture();const fetch=vi.fn(async()=>new Response(JSON.stringify({message_id:'one',recipient_id:'student'})));vi.stubGlobal('fetch',fetch);
+ expect((await post()).status).toBe(200);sqlite.exec("UPDATE integration_settings SET value='0'");
+ const res=await post(1,'a','human-replies');expect(res.status).toBe(200);expect(await res.json()).toMatchObject({data:{sent:true,automaticDeliveryResumed:false}});
+ expect(fetch).toHaveBeenCalledOnce();expect(sqlite.prepare('SELECT status FROM recruitment_human_reply_contracts').get()?.status).toBe('sent');expect(sqlite.prepare('SELECT COUNT(*) n FROM recruitment_inbound_holds').get()?.n).toBe(1);
+ expect((await post(1,'a','human-replies')).status).toBe(409);expect(fetch).toHaveBeenCalledOnce();
+});
+it.each(['unreviewed','changed-body','paused','preparation-lock','stop-before-claim','timeout','wrong-ack'])( 'does not permit unsafe human delivery: %s',async mode=>{
+ const {sqlite,post,env}=await fixture();const fetch=vi.fn(async()=>{if(mode==='timeout')throw Error('offline');return new Response(JSON.stringify({message_id:'one',recipient_id:mode==='wrong-ack'?'foreign':'student'}));});vi.stubGlobal('fetch',fetch);
+ if(mode!=='unreviewed')expect((await post()).status).toBe(200);
+ if(mode!=='paused')sqlite.exec("UPDATE integration_settings SET value='0'");
+ if(mode==='preparation-lock')env.OUTBOUND_PREPARATION_LOCK='1';
+ if(mode==='stop-before-claim')sqlite.prepare("UPDATE recruitment_inbound_holds SET state='stopped'").run();
+ const res=await post(1,'a','human-replies',mode==='changed-body'?'changed':'相談への回答');expect(res.status).toBe(409);
+ expect(fetch).toHaveBeenCalledTimes(['timeout','wrong-ack'].includes(mode)?1:0);
+ const count=fetch.mock.calls.length;expect((await post(1,'a','human-replies',mode==='changed-body'?'changed':'相談への回答')).status).toBe(409);expect(fetch).toHaveBeenCalledTimes(count);
 });

@@ -1,3 +1,4 @@
+import type {HumanReplyInput} from '../services/recruitment-human-reply.js';
 import { readAppSecret, type CredentialEnv } from './credential-crypto.js';
 import { rewriteTrackedMessage } from './outbound-tracking.js';
 import { assertGraphAvailable, graphObserver } from './graph-observation.js';
@@ -182,7 +183,7 @@ export async function getAccountClient(
   env: AccountEnv,
   db: D1Database,
   account: IgAccount,
-  options: { forHealthProbe?: boolean; skipTokenRefresh?: boolean; recruitmentOperation?: { key: string; ownerEpoch: string; definitionVersion?: string } } = {},
+  options: { forHealthProbe?: boolean; skipTokenRefresh?: boolean; recruitmentOperation?: { key: string; ownerEpoch: string; definitionVersion?: string; humanReply?: HumanReplyInput } } = {},
 ): Promise<InstagramClient> {
   await assertGraphAvailable(db,account.id);
   if (!options.forHealthProbe) {

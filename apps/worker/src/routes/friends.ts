@@ -1,4 +1,4 @@
-import {prepareHumanReplyContract} from '../services/recruitment-human-reply.js';
+import {prepareHumanReplyContract,claimHumanReplyContract,finishHumanReplyContract} from '../services/recruitment-human-reply.js';
 import { recruitmentSubjectHash } from '../services/recruitment-inbound-holds.js';
 import { messagingEligibility } from '../services/messaging-window.js';
 import { Hono } from 'hono';
@@ -472,6 +472,31 @@ friends.post('/api/friends/:id/human-reply-review', requireRole('owner','admin')
   await prepareHumanReplyContract(c.env.DB,{accountId:account.id,followerId,actorId:c.get('staff').id,nonce:c.req.header('Idempotency-Key')??'',text:body.text},true);
   return c.json({success:true,data:{prepared:true,maySend:false,expiresInSeconds:60}});
  }catch{return c.json({success:false,error:'返信内容または受信状態を確認できません。送信せず確認を保留してください。'},409);}
+});
+
+// A separate, explicit reviewed text action; never resumes automation.
+friends.post('/api/friends/:id/human-replies', requireRole('owner','admin'), async c=>{
+ let intent:{accountId:string;key:string}|undefined;
+ if(c.env.RECRUITMENT_LEDGER_ENFORCEMENT!=='1'||c.env.OUTBOUND_PREPARATION_LOCK==='1')return c.json({success:false,error:'有人返信は送信停止中です。'},409);
+ try{
+  const followerId=Number(c.req.param('id'));if(!Number.isSafeInteger(followerId)||followerId<1)return c.json({success:false,error:'Invalid follower'},400);
+  const accountId=c.req.query('account_id');
+  const account=accountId?await c.env.DB.prepare('SELECT * FROM ig_accounts WHERE id=?').bind(accountId).first<IgAccount>():await c.env.DB.prepare('SELECT * FROM ig_accounts WHERE is_default=1 LIMIT 1').first<IgAccount>();
+  const friend=account?await c.env.DB.prepare('SELECT igsid FROM followers WHERE id=? AND account_id=?').bind(followerId,account.id).first<{igsid:string}>():null;
+  if(!account||!friend)return c.json({success:false,error:'not found'},404);
+  const body=await c.req.json<{text:string}>();const input={accountId:account.id,followerId,actorId:c.get('staff').id,nonce:c.req.header('Idempotency-Key')??'',text:body.text};
+  const key=await claimHumanReplyContract(c.env.DB,input,true);intent={accountId:account.id,key};
+  const contract=await c.env.DB.prepare('SELECT owner_epoch FROM recruitment_human_reply_contracts WHERE account_id=? AND operation_key=?').bind(account.id,key).first<{owner_epoch:string}>();
+  if(!contract)throw Error('Review missing');
+  const client=await getAccountClient(c.env,c.env.DB,account,{skipTokenRefresh:true,recruitmentOperation:{key,ownerEpoch:contract.owner_epoch,humanReply:input}});
+  await client.sendText(friend.igsid,input.text);
+  await c.env.DB.prepare("INSERT INTO messages_log(follower_id,direction,message_type,body,trigger_source) VALUES(?,'out','text',?,'manual')").bind(followerId,JSON.stringify({text:input.text})).run();
+  await finishHumanReplyContract(c.env.DB,account.id,key,'sent');
+  return c.json({success:true,data:{sent:true,automaticDeliveryResumed:false}});
+ }catch{
+  if(intent)await finishHumanReplyContract(c.env.DB,intent.accountId,intent.key,'uncertain').catch(()=>{});
+  return c.json({success:false,error:'返信を送信できたか確認できません。再送せず記録を照合してください。'},409);
+ }
 });
 
 // POST /api/friends/:id/messages - send message to friend
