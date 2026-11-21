@@ -43,28 +43,41 @@ export function nextRecruitmentAction(s, request, now = Date.now()) {
 // Registration counts require a real LINE registration event; clicks do not count.
 export function recruitmentCohort(events, asOf, windowDays = 30) {
   if (!Number.isSafeInteger(asOf) || asOf<0 || !Number.isFinite(windowDays) || !(windowDays > 0)) throw new Error('Invalid observation window');
+  const windowMs=windowDays*86400000;
+  if(!Number.isSafeInteger(windowMs))throw new Error('Invalid observation window');
   const rows = new Map();
-  const seen = new Map();
+  const seen = new Map(), evidence=new Map();
   for (const e of events) {
     if (typeof e.eventId!=='string'||!e.eventId.trim()||typeof e.candidateId!=='string'||!e.candidateId.trim()||typeof e.kind!=='string'||!e.kind||!Number.isSafeInteger(e.at)||e.at<0||e.at>asOf) throw new Error('Invalid event');
     const signature=JSON.stringify([e.candidateId,e.kind,e.at,e.evidenceId??null,e.confirmedByHuman===true,e.internal===true]);
     if(seen.has(e.eventId)){if(seen.get(e.eventId)!==signature)throw new Error('Conflicting event identity requires reconciliation');continue;}
     seen.set(e.eventId,signature);
+    if(typeof e.evidenceId==='string'&&e.evidenceId.trim()){
+      const key=JSON.stringify([e.kind,e.evidenceId]);
+      if(evidence.has(key)&&evidence.get(key)!==signature)throw new Error('Conflicting evidence identity requires reconciliation');
+      evidence.set(key,signature);
+    }
     if (!rows.has(e.candidateId)) rows.set(e.candidateId, []);
     rows.get(e.candidateId).push(e);
   }
-  let mature = 0, interviews = 0, visits = 0, immature = 0;
+  let mature = 0, interviews = 0, visits = 0, hires=0, interviewedHires=0, immature = 0;
   for (const list of rows.values()) {
     if (list.some(e => e.internal === true)) continue;
     const registrations = list.filter(e => e.kind === 'line_registered' && typeof e.evidenceId==='string' && e.evidenceId.trim()).sort((a,b) => a.at-b.at);
     if (!registrations.length) continue;
     const registeredAt = registrations[0].at;
-    const cutoff = registeredAt + windowDays * 86400000;
+    const cutoff = registeredAt + windowMs;
+    if(!Number.isSafeInteger(cutoff))throw new Error('Invalid observation window');
     if (cutoff > asOf) { immature++; continue; }
     mature++;
     const occurred = kind => list.some(e => e.kind === kind && typeof e.evidenceId==='string' && e.evidenceId.trim() && e.confirmedByHuman === true && e.at >= registeredAt && e.at <= cutoff);
     if (occurred('visit_attended')) visits++;
-    if (occurred('interview_attended')) interviews++;
+    const interviewed=occurred('interview_attended'),hired=occurred('hire_confirmed');
+    if (interviewed) interviews++;
+    if (hired) hires++;
+    // A hire does not imply that an interview was actually attended. Only
+    // observed interviews preceding an observed hire enter the stage ratio.
+    if(hired&&list.some(i=>i.kind==='interview_attended'&&typeof i.evidenceId==='string'&&i.evidenceId.trim()&&i.confirmedByHuman===true&&i.at>=registeredAt&&i.at<=cutoff&&list.some(h=>h.kind==='hire_confirmed'&&typeof h.evidenceId==='string'&&h.evidenceId.trim()&&h.confirmedByHuman===true&&h.at>=i.at&&h.at<=cutoff)))interviewedHires++;
   }
-  return { windowDays, matureRegistrations: mature, immatureRegistrations: immature, visitAttendees: visits, interviewAttendees: interviews, interviewRate: mature ? interviews / mature : null };
+  return { windowDays, matureRegistrations: mature, immatureRegistrations: immature, visitAttendees: visits, interviewAttendees: interviews, confirmedHires:hires, visitRate:mature?visits/mature:null, interviewRate: mature ? interviews / mature : null, hireRate:mature?hires/mature:null, interviewToHireRate:interviews?interviewedHires/interviews:null };
 }
