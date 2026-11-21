@@ -1,4 +1,5 @@
-import {isRecruitmentDeliveryWindow} from './recruitment-automation-admission.js';
+import type {RecruitmentEnrollmentGuard} from '@ig-harness/db';
+import {isRecruitmentDeliveryWindow,recruitmentAdmissionPredicate} from './recruitment-automation-admission.js';
 import {claimRecruitmentPublicReply,recruitmentPublicReplyVersion} from './recruitment-public-reply.js';
 import { InstagramApiError, InstagramTransportError, type InstagramClient } from '@ig-harness/ig-sdk';
 import { deliveryFailure, sendIgMessage, validateBroadcastMessage } from './broadcast.js';
@@ -56,9 +57,11 @@ export async function enqueueCommentRuleJob(db: D1Database, input: {
         statements.push(db.prepare("UPDATE gate_deliveries SET end_reason=NULL,metadata=json_set(metadata,'$.private_reply_queued',1) WHERE id=?").bind(input.gateDeliveryId));
     await db.batch(statements);
 }
-export async function resumeCommentJobs(db: D1Database, followerId: number, accountId: string): Promise<void> {
-    await db.prepare("UPDATE comment_rule_jobs SET delivery_mode='dm_after_reply',due_at=?,reason=NULL WHERE follower_id=? AND account_id=? AND status='pending' AND delivery_mode='awaiting_inbound'")
-        .bind(new Date().toISOString(), followerId, accountId).run();
+export async function resumeCommentJobs(db: D1Database, followerId: number, accountId: string, snapshot?:RecruitmentEnrollmentGuard): Promise<void> {
+    const admission=snapshot?recruitmentAdmissionPredicate(accountId,followerId,snapshot):{sql:'1',bindings:[]};
+    await db.prepare(`UPDATE comment_rule_jobs SET delivery_mode='dm_after_reply',due_at=?,reason=NULL WHERE follower_id=? AND account_id=? AND status='pending' AND delivery_mode='awaiting_inbound'
+ AND (gate_delivery_id IS NULL OR EXISTS(SELECT 1 FROM gate_deliveries d JOIN engagement_gates g ON g.id=d.gate_id AND g.account_id=comment_rule_jobs.account_id AND g.status='active' WHERE d.id=comment_rule_jobs.gate_delivery_id AND d.follower_id=comment_rule_jobs.follower_id AND d.end_reason IS NULL)) AND ${admission.sql}`)
+        .bind(new Date().toISOString(), followerId, accountId,...admission.bindings).run();
     const waiting = await db.prepare("SELECT fs.id,fs.scenario_id FROM follower_scenarios fs JOIN scenarios s ON s.id=fs.scenario_id WHERE fs.follower_id=? AND s.account_id=? AND s.is_active=1 AND fs.status='active' AND fs.end_reason='awaiting_inbound'")
         .bind(followerId, accountId).all<{
         id: number;
@@ -69,7 +72,9 @@ export async function resumeCommentJobs(db: D1Database, followerId: number, acco
             delay_minutes: number;
         }>();
         if (step)
-            await db.prepare("UPDATE follower_scenarios SET next_step_at=?,end_reason=NULL WHERE id=? AND end_reason='awaiting_inbound'").bind(new Date(Date.now() + step.delay_minutes * 60000).toISOString(), row.id).run();
+            await db.prepare(`UPDATE follower_scenarios SET next_step_at=?,end_reason=NULL WHERE id=? AND end_reason='awaiting_inbound' AND status='active'
+ AND EXISTS(SELECT 1 FROM scenarios s WHERE s.id=follower_scenarios.scenario_id AND s.account_id=? AND s.is_active=1) AND ${admission.sql}`)
+ .bind(new Date(Date.now() + step.delay_minutes * 60000).toISOString(), row.id,accountId,...admission.bindings).run();
     }
 }
 export type CommentJobClientFactory = (operationKey: string, definitionVersion?:string) => Promise<InstagramClient>;

@@ -304,10 +304,11 @@ export async function handleMessagingEvent(
     if (event.message || event.postback) await logMessage(db,{ followerId:follower.id,direction:'in',messageType:'text',triggerSource:null,body:JSON.stringify({ text:event.message?.text ?? event.postback?.title ?? '[attachment]', channel:observeOnly?'standby':'messaging' }) });
     return;
   }
+  let automaticAdmission;
   if(clientForOperation){
     try{
       if(!accountId)throw Error('Recruitment account missing');
-      await assertRecruitmentAutomationAdmission(db,accountId,follower.id);
+      automaticAdmission=await assertRecruitmentAutomationAdmission(db,accountId,follower.id);
     }catch{
       // Retain the actual incoming conversation, but create no automation,
       // linkage, scenario, outbound entry or external forwarding side effect.
@@ -315,7 +316,7 @@ export async function handleMessagingEvent(
       return;
     }
   }
-  if (accountId) await resumeCommentJobs(db,follower.id,accountId);
+  if (accountId) await resumeCommentJobs(db,follower.id,accountId,automaticAdmission);
 
   // Operator stop switch (U22): inbound bookkeeping above still runs, but no
   // automated send below happens while paused. Queue processors also skip
