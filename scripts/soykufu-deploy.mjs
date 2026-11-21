@@ -1,3 +1,4 @@
+import {assertStoppedDeploySchema} from './stopped-deploy-readiness.mjs';
 import { writeFile, rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -40,6 +41,9 @@ async function verifyStopped() {
 }
 try {
   await verifyStopped();
+  // Reject missing/drifted migrations before config writes, secret creation or deploy.
+  // This read-only prerequisite does not replace backup/version/binding review.
+  await assertStoppedDeploySchema({repoDir:fileURLToPath(new URL('../',import.meta.url)),query:async sql=>(await api(`d1/database/${database}/query`,{sql}))[0]?.results??[]});
   const databases = await api('d1/database?per_page=100');
   if (!databases.some(x => x.uuid === database && x.name === name)) throw new Error('Dedicated D1 identity mismatch');
   const buckets = await api('r2/buckets?per_page=100');
