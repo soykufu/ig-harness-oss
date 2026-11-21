@@ -150,6 +150,7 @@ export async function verifyLatestSchema(query) {
     private_reply_attempts: ['account_id','comment_id','follower_id','status'],
     media_posts: ['phase','phase_started_at','child_creation_ids'],
     admin_sessions: ['id_hash','staff_id','credential_hash','csrf_hash','expires_at'],
+    recruitment_human_reply_contracts: ['account_id','operation_key','follower_id','actor_id','body_hash','inbound_hash','owner_epoch','status','created_at_ms','expires_at_ms'],
     recruitment_manual_intents: ['account_id','operation_key','follower_id','body_hash','owner_epoch','status','created_at_ms'],
     recruitment_echo_receipts: ['account_id','message_id','sent_at_ms','first_received_at_ms','last_received_at_ms'],
     recruitment_inbound_holds: ['account_id','event_key','subject_hash','state','occurred_at_ms','recorded_at_ms'],

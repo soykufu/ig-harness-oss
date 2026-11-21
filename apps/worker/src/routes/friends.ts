@@ -1,3 +1,4 @@
+import {prepareHumanReplyContract} from '../services/recruitment-human-reply.js';
 import { recruitmentSubjectHash } from '../services/recruitment-inbound-holds.js';
 import { messagingEligibility } from '../services/messaging-window.js';
 import { Hono } from 'hono';
@@ -455,6 +456,22 @@ friends.get('/api/friends/:id/manual-delivery-status', requireRole('owner', 'adm
   } catch {
     return c.json({ success: false, error: '送信記録を取得できません。再送せず確認を保留してください。' }, 503);
   }
+});
+
+// Preparation only: no sender, stop release or lifecycle exemption.
+friends.post('/api/friends/:id/human-reply-review', requireRole('owner','admin'), async c=>{
+ c.header('Cache-Control','no-store');
+ if(c.env.RECRUITMENT_LEDGER_ENFORCEMENT!=='1')return c.json({success:false,error:'有人返信の確認機能は準備中です。'},409);
+ try{
+  const followerId=Number(c.req.param('id'));
+  if(!Number.isSafeInteger(followerId)||followerId<1)return c.json({success:false,error:'Invalid follower'},400);
+  const accountId=c.req.query('account_id');
+  const account=accountId?await c.env.DB.prepare('SELECT id FROM ig_accounts WHERE id=?').bind(accountId).first<{id:string}>():await c.env.DB.prepare('SELECT id FROM ig_accounts WHERE is_default=1 LIMIT 1').first<{id:string}>();
+  if(!account||!await c.env.DB.prepare('SELECT id FROM followers WHERE id=? AND account_id=?').bind(followerId,account.id).first())return c.json({success:false,error:'not found'},404);
+  const body=await c.req.json<{text:string}>();
+  await prepareHumanReplyContract(c.env.DB,{accountId:account.id,followerId,actorId:c.get('staff').id,nonce:c.req.header('Idempotency-Key')??'',text:body.text},true);
+  return c.json({success:true,data:{prepared:true,maySend:false,expiresInSeconds:60}});
+ }catch{return c.json({success:false,error:'返信内容または受信状態を確認できません。送信せず確認を保留してください。'},409);}
 });
 
 // POST /api/friends/:id/messages - send message to friend
