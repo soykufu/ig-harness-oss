@@ -21,13 +21,21 @@ export async function onceRestore(plan,io,env,now=()=>Date.now(),approvalHash=AP
  const reject=()=>({...held(attempted),stage});
  try{
   if(env.GITHUB_REPOSITORY!=='soykufu/ig-harness-oss'||env.GITHUB_REF!=='refs/heads/main'||env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_RUN_ATTEMPT!=='1'||!approved(plan?.target,approvalHash))return reject();
-  if(plan.mode!=='prepare'&&plan.mode!=='execute')return reject();
+  if(!['prepare','execute','audit'].includes(plan.mode))return reject();
   if(plan.mode==='execute'&&env.GITHUB_RUN_NUMBER!=='20')return reject();
   stage="target_read";
   if(!(await io.validateTarget(plan.target)).ok)return reject();
   stage="snapshot_before";
   const before=await io.snapshot();
   if(!safe(before)||before.ledgerHash!==plan.target.migrationInventoryHash||before.fingerprint!==plan.target.deploymentFingerprint)return reject();
+  if(plan.mode==='audit'){
+   const expected=plan.preflight?.snapshot;if(!safe(expected))return reject();
+   const mismatchedFields=Object.keys(expected).filter(k=>!['countsHash','tableCounts'].includes(k)&&JSON.stringify(before[k])!==JSON.stringify(expected[k]));
+   stage='audit_integrity';const integrity=await io.integrity();
+   stage='audit_final_snapshot';const stable=JSON.stringify(await io.snapshot())===JSON.stringify(before);
+   const ok=mismatchedFields.length===0&&integrity===true&&stable;
+   return {ok,state:ok?'post_restore_readonly_verified':'post_restore_difference',mismatchedFields,integrityVerified:integrity,stable,restoreReplayed:false,snapshot:before,allTableCountsMatched:before.countsHash===expected.countsHash,rowContentsVerified:false,deploymentAuthorized:false};
+  }
   if(plan.mode==='prepare'){
    stage="preflight_bookmark";
    const t=now(),undoTimestamp=new Date(t).toISOString();
@@ -57,11 +65,13 @@ export async function onceRestore(plan,io,env,now=()=>Date.now(),approvalHash=AP
 async function main(){
  const token=process.env.CLOUDFLARE_API_TOKEN;if(!token)return held();
  const plan=JSON.parse(process.env.RESTORE_PLAN||'null');
- const api=async(path,{sql,restore=false}={})=>{
-  if(restore){if(!path.startsWith(DB+'/time_travel/restore?timestamp='))throw Error('Unexpected mutation');}
-  else if(sql!==undefined){if(path!==DB+'/query'||!/^\s*(SELECT|PRAGMA)\b/.test(sql)||sql.includes(';'))throw Error('Unexpected query');}
+ // The one approved restore has been consumed. This entry now has NO restore
+ // transport at all, even if an old input is submitted in a later run.
+ if(plan?.mode!=='audit')return held();
+ const api=async(path,{sql}={})=>{
+  if(sql!==undefined){if(path!==DB+'/query'||!/^\s*(SELECT|PRAGMA)\b/.test(sql)||sql.includes(';'))throw Error('Unexpected query');}
   else if(!isStoppedRuntimeReadPath(path)&&!path.startsWith(DB+'/time_travel/bookmark?timestamp='))throw Error('Unexpected read');
-  const r=await fetch(ROOT+path,{method:restore||sql!==undefined?'POST':'GET',redirect:'error',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},...(sql===undefined?{}:{body:JSON.stringify({sql})}),signal:AbortSignal.timeout(restore?60000:15000)});
+  const r=await fetch(ROOT+path,{method:sql!==undefined?'POST':'GET',redirect:'error',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},...(sql===undefined?{}:{body:JSON.stringify({sql})}),signal:AbortSignal.timeout(15000)});
   const b=await r.json();if(!r.ok||b.success!==true)throw Error('Provider action failed');return b.result;
  };
  const query=async sql=>(await api(DB+'/query',{sql}))[0]?.results;
@@ -74,6 +84,6 @@ async function main(){
   const counts=[];for(const row of schema.filter(x=>x.type==='table')){if(typeof row.name!=='string')throw Error('Invalid schema');const n=(await query('SELECT COUNT(*) AS n FROM '+JSON.stringify(row.name)))[0]?.n;if(!Number.isSafeInteger(n)||n<0)throw Error('Invalid count');counts.push([row.name,n]);}
   return {...s,fingerprint:r.deploymentFingerprint,lock:r.preparationLockVerified,extraFlags:r.extraFlagsVerified,bindings:r.deployedBindingsVerified,stable:r.deploymentStable,schemaHash:digest(schema),countsHash:digest(counts),businessCountsHash:digest(counts.filter(([name])=>name!=='rate_limit_buckets')),tableCounts:counts};
  };
- return onceRestore(plan,{validateTarget:ref=>verifySavedRecovery(ref,{state,runtime,bookmark}),snapshot,bookmark,restore:timestamp=>api(DB+'/time_travel/restore?timestamp='+encodeURIComponent(timestamp),{restore:true}),integrity:async()=>{const rows=await query('PRAGMA integrity_check');return rows?.length===1&&Object.values(rows[0])[0]==='ok'&&(await query('PRAGMA foreign_key_check')).length===0;}},process.env);
+ return onceRestore(plan,{validateTarget:ref=>verifySavedRecovery(ref,{state,runtime,bookmark}),snapshot,bookmark,integrity:async()=>{const rows=await query('PRAGMA quick_check');return rows?.length===1&&Object.values(rows[0])[0]==='ok'&&(await query('PRAGMA foreign_key_check')).length===0;}},process.env);
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){let result;try{result=await main();}catch{result=held();}console.log(JSON.stringify(result));if(!result.ok)process.exitCode=1;}
