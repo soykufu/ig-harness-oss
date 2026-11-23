@@ -10,9 +10,13 @@ on:
         description: 'Existing saved recovery reference JSON; read-only recheck, never restore'
         type: string
         default: ''
+      restore_plan:
+        description: 'Owner-approved one-time restore plan; preparation is read-only, execute bound to run 17'
+        type: string
+        default: ''
   push:
     branches: [main]
-    paths: ['.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs', 'scripts/stopped-saved-recovery.mjs', 'scripts/stopped-saved-recovery.test.mjs']
+    paths: ['.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs', 'scripts/stopped-saved-recovery.mjs', 'scripts/stopped-saved-recovery.test.mjs', 'scripts/stopped-once-restore.mjs', 'scripts/stopped-once-restore.test.mjs']
 permissions:
   contents: read
 jobs:
@@ -48,3 +52,11 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           RECOVERY_REFERENCE: ${{ inputs.recovery_reference }}
         run: node scripts/stopped-saved-recovery.mjs
+      - name: Test one-time restore boundaries offline
+        run: node --test scripts/stopped-once-restore.test.mjs
+      - name: Prepare or execute the scoped owner-approved one-time restore
+        if: github.event_name == 'workflow_dispatch' && inputs.restore_plan != '' && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RESTORE_PLAN: ${{ inputs.restore_plan }}
+        run: node scripts/stopped-once-restore.mjs
