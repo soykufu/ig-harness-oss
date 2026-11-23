@@ -20,7 +20,7 @@ on:
         default: ''
   push:
     branches: [main]
-    paths: ['.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs', 'scripts/stopped-saved-recovery.mjs', 'scripts/stopped-saved-recovery.test.mjs', 'scripts/stopped-once-restore.mjs', 'scripts/stopped-once-restore.test.mjs', 'scripts/stopped-migration-review.mjs', 'scripts/stopped-migration-review.test.mjs']
+    paths: ['.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs', 'scripts/stopped-saved-recovery.mjs', 'scripts/stopped-saved-recovery.test.mjs', 'scripts/stopped-once-restore.mjs', 'scripts/stopped-once-restore.test.mjs', 'scripts/stopped-migration-review.mjs', 'scripts/stopped-migration-review.test.mjs', 'scripts/stopped-database-envelope.mjs', 'scripts/stopped-database-envelope.test.mjs']
 permissions:
   contents: read
 jobs:
@@ -49,6 +49,8 @@ jobs:
         env:
           IG_META_USER_ACCESS_TOKEN: ${{ secrets.IG_META_USER_ACCESS_TOKEN }}
         run: node scripts/soykufu-meta-readonly.mjs
+      - name: Test encrypted database copy boundaries offline without credentials
+        run: node --test scripts/stopped-database-envelope.test.mjs
       - name: Test saved recovery point boundaries offline
         run: node --test scripts/stopped-saved-recovery.test.mjs
       - name: Recheck existing saved recovery point without restoring
