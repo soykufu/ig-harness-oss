@@ -52,6 +52,12 @@ export function recruitmentCohort(events, asOf, windowDays = 30) {
   const rows = new Map();
   const seen = new Map(), evidence=new Map();
   for (const e of events) {
+    // Do not normalize identifiers into a guessed person or silently treat
+    // string-valued source flags as an external, confirmed candidate.
+    const exactId = value => typeof value === 'string' && value.trim() !== '' && value === value.trim();
+    if (!e || typeof e !== 'object' || !exactId(e.eventId) || !exactId(e.candidateId)
+      || (typeof e.evidenceId === 'string' && e.evidenceId.trim() && !exactId(e.evidenceId))
+      || ['internal','confirmedByHuman'].some(key => Object.hasOwn(e,key) && typeof e[key] !== 'boolean')) throw new Error('Invalid event');
     if (typeof e.eventId!=='string'||!e.eventId.trim()||typeof e.candidateId!=='string'||!e.candidateId.trim()||typeof e.kind!=='string'||!e.kind||!Number.isSafeInteger(e.at)||e.at<0||e.at>asOf) throw new Error('Invalid event');
     const signature=JSON.stringify([e.candidateId,e.kind,e.at,e.evidenceId??null,e.confirmedByHuman===true,e.internal===true]);
     if(seen.has(e.eventId)){if(seen.get(e.eventId)!==signature)throw new Error('Conflicting event identity requires reconciliation');continue;}
