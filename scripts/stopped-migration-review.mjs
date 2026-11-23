@@ -34,6 +34,19 @@ export async function reviewStoppedMigration({repoDir,query,readRuntime,evidence
   return {ok:true,state:'migration_candidate_ready_for_review',planId:digest(plan),plan,nativeEvidenceMatched:true,applyAuthorized:false,backupVerified:false,deploymentAuthorized:false,messagesSent:0};
  }catch{return held('read_or_validation_failed');}
 }
+// A saved candidate is never an apply grant. Re-read the live installation and
+// the SQL files instead of trusting a prior successful review or its hash alone.
+export async function revalidateStoppedMigrationPlan({saved,...options}){
+ let original;
+ try{
+  original=JSON.parse(JSON.stringify(saved));
+  if(original?.ok!==true||original.state!=='migration_candidate_ready_for_review'||original.nativeEvidenceMatched!==true||original.applyAuthorized!==false||original.backupVerified!==false||original.deploymentAuthorized!==false||original.messagesSent!==0||!HASH.test(original.planId)||original.plan?.kind!=='stopped_migration_review_v1'||original.plan.accountId!==ACCOUNT||original.plan.databaseId!==DATABASE||digest(original.plan)!==original.planId)return held('saved_plan_invalid');
+ }catch{return held('saved_plan_invalid');}
+ const current=await reviewStoppedMigration(options);
+ if(!current.ok)return current;
+ if(current.planId!==original.planId)return held('saved_plan_changed');
+ return {...current,state:'saved_migration_candidate_revalidated'};
+}
 async function main(){
  if(process.env.GITHUB_REPOSITORY!=='soykufu/ig-harness-oss'||process.env.GITHUB_REF!=='refs/heads/main'||process.env.GITHUB_EVENT_NAME!=='workflow_dispatch')return held('runtime_not_authorized');
  const token=process.env.CLOUDFLARE_API_TOKEN;if(!token)return held('credential_missing');
@@ -43,6 +56,8 @@ async function main(){
   const r=await fetch('https://api.cloudflare.com/client/v4'+path,{method:sql===undefined?'GET':'POST',redirect:'error',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},...(sql===undefined?{}:{body:JSON.stringify({sql})}),signal:AbortSignal.timeout(15000)});
   const b=await r.json();if(!r.ok||b.success!==true)throw Error('Read failed');return b.result;
  };
- return reviewStoppedMigration({repoDir:process.cwd(),query:async sql=>(await api(DB+'/query',sql))[0]?.results,readRuntime:()=>readStoppedRuntimeSnapshot({read:path=>api(path)}),evidence:JSON.parse(process.env.NATIVE_RECOVERY_EVIDENCE||'null')});
+ const input=JSON.parse(process.env.NATIVE_RECOVERY_EVIDENCE||'null');
+ const options={repoDir:process.cwd(),query:async sql=>(await api(DB+'/query',sql))[0]?.results,readRuntime:()=>readStoppedRuntimeSnapshot({read:path=>api(path)}),evidence:input?.saved?input.evidence:input};
+ return input?.saved?revalidateStoppedMigrationPlan({...options,saved:input.saved}):reviewStoppedMigration(options);
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){let r;try{r=await main();}catch{r=held('review_failed');}console.log(JSON.stringify(r));if(!r.ok)process.exitCode=1;}
