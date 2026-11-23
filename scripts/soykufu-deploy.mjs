@@ -36,9 +36,9 @@ function wrangler(args, input) {
   if (result.error || result.status !== 0) throw new Error(`Wrangler ${args[0]} failed; stop and inspect this run before retrying`);
 }
 async function verifyStopped() {
-  const results = await api(`d1/database/${database}/query`, { sql: "SELECT (SELECT value FROM integration_settings WHERE key='outbound_paused') AS paused, (SELECT COUNT(*) FROM ig_accounts) AS accounts" });
+  const results = await api(`d1/database/${database}/query`, { sql: "SELECT (SELECT value FROM integration_settings WHERE key='outbound_paused') AS paused, (SELECT COUNT(*) FROM ig_accounts) AS accounts, (SELECT COUNT(*) FROM followers) AS followers" });
   const state = results[0]?.results?.[0];
-  if (state?.paused !== '1' || Number(state.accounts) !== 0) throw new Error('Expected stopped, unconnected installation; do not deploy automatically');
+  if (state?.paused !== '1' || state.accounts !== 0 || state.followers !== 0) throw new Error('Expected stopped, unconnected installation; do not deploy automatically');
 }
 try {
   await verifyStopped();
