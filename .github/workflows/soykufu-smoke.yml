@@ -14,8 +14,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Read stopped schema and deployed runtime metadata without changes
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}
         run: node scripts/soykufu-smoke.mjs
+      - name: Test isolated export drill boundaries
+        run: node --test scripts/stopped-export-drill.test.mjs scripts/stopped-export-drill-entry.test.mjs
+      - name: Export stopped D1 and restore only in runner memory
+        if: github.run_number == 9 && github.run_attempt == 1 && github.event_name == 'push'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/stopped-export-drill-entry.mjs
