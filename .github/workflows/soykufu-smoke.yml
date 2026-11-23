@@ -6,9 +6,13 @@ on:
         description: 'Verify saved Meta token identity and grants only (no connection or sending)'
         type: boolean
         default: false
+      recovery_reference:
+        description: 'Existing saved recovery reference JSON; read-only recheck, never restore'
+        type: string
+        default: ''
   push:
     branches: [main]
-    paths: ['.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs']
+    paths: ['.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs', 'scripts/stopped-saved-recovery.mjs', 'scripts/stopped-saved-recovery.test.mjs']
 permissions:
   contents: read
 jobs:
@@ -36,3 +40,11 @@ jobs:
         env:
           IG_META_USER_ACCESS_TOKEN: ${{ secrets.IG_META_USER_ACCESS_TOKEN }}
         run: node scripts/soykufu-meta-readonly.mjs
+      - name: Test saved recovery point boundaries offline
+        run: node --test scripts/stopped-saved-recovery.test.mjs
+      - name: Recheck existing saved recovery point without restoring
+        if: github.event_name == 'workflow_dispatch' && inputs.recovery_reference != '' && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RECOVERY_REFERENCE: ${{ inputs.recovery_reference }}
+        run: node scripts/stopped-saved-recovery.mjs
