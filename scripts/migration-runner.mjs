@@ -173,25 +173,27 @@ export async function verifyLatestSchema(query) {
   }
   const gateIndexes=await query('PRAGMA index_list(recruitment_gate_operations)');
   const uniqueGateColumns=[];
-  for(const index of gateIndexes.filter(index=>index.unique===1)){
+  // Partial unique indexes protect only selected rows, so they cannot prove
+  // replay protection for every pending/unknown/completed operation.
+  for(const index of gateIndexes.filter(index=>index.unique===1 && index.partial===0)){
     const columns=await query('PRAGMA index_info('+JSON.stringify(index.name)+')');
     uniqueGateColumns.push(JSON.stringify(columns.map(column=>column.name)));
   }
   for(const columns of [['account_id','operation_key'],['account_id','event_key']])if(!uniqueGateColumns.includes(JSON.stringify(columns)))throw new Error('Schema verification failed: gate operation uniqueness missing');
   const ctaIndexes=await query('PRAGMA index_list(recruitment_gate_cta_operations)');
   const ctaUnique=[];
-  for(const index of ctaIndexes.filter(index=>index.unique===1)){
+  for(const index of ctaIndexes.filter(index=>index.unique===1 && index.partial===0)){
     const columns=await query('PRAGMA index_info('+JSON.stringify(index.name)+')');ctaUnique.push(JSON.stringify(columns.map(column=>column.name)));
   }
   for(const columns of [['account_id','operation_key'],['account_id','event_key'],['account_id','delivery_id']])if(!ctaUnique.includes(JSON.stringify(columns)))throw new Error('Schema verification failed: CTA operation uniqueness missing');
   const followupIndexes=await query('PRAGMA index_list(recruitment_gate_followup_operations)');
   const followupUnique=[];
-  for(const index of followupIndexes.filter(index=>index.unique===1)){
+  for(const index of followupIndexes.filter(index=>index.unique===1 && index.partial===0)){
     const columns=await query('PRAGMA index_info('+JSON.stringify(index.name)+')');followupUnique.push(JSON.stringify(columns.map(column=>column.name)));
   }
   for(const columns of [['account_id','operation_key'],['account_id','delivery_id','step_index']])if(!followupUnique.includes(JSON.stringify(columns)))throw new Error('Schema verification failed: follow-up operation uniqueness missing');
   const formIndexes=await query('PRAGMA index_list(form_submissions)');
-  if(!formIndexes.some(index=>index.name==='idx_form_submission_request' && index.unique===1))throw new Error('Schema verification failed: form request uniqueness missing');
+  if(!formIndexes.some(index=>index.name==='idx_form_submission_request' && index.unique===1 && index.partial===0))throw new Error('Schema verification failed: form request uniqueness missing');
   const requestColumns=await query('PRAGMA index_info(idx_form_submission_request)');
   if(JSON.stringify(requestColumns.map(column=>column.name))!==JSON.stringify(['form_id','request_key']))throw new Error('Schema verification failed: form request uniqueness columns changed');
 }

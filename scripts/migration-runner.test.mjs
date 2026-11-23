@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { applyMigrations, splitSql } from './migration-runner.mjs';
+import { applyMigrations, splitSql, verifyLatestSchema } from './migration-runner.mjs';
 const repoDir = fileURLToPath(new URL('../', import.meta.url));
 function adapter(db, fail) {
   return { repoDir, log() {}, query: async (sql) => db.prepare(sql).all(), execute: async (sql) => {
@@ -150,3 +150,30 @@ for(const column of ['step_index','definition_version','payload_version','expect
 test('rejects followup receipt tables without operation and delivery-step uniqueness',async()=>{const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));db.exec('ALTER TABLE recruitment_gate_followup_operations RENAME TO damaged_followups');const cols=db.prepare('PRAGMA table_info(damaged_followups)').all().map(c=>c.name+' '+c.type);db.exec('CREATE TABLE recruitment_gate_followup_operations('+cols.join(',')+')');await assert.rejects(applyMigrations(adapter(db)),/follow-up operation uniqueness missing/);}finally{db.close();}});
 
 test('followup receipt migration never manufactures evidence for legacy delivered steps',async()=>{const db=new DatabaseSync(':memory:');try{await applyMigrations(adapter(db));db.exec("DROP TABLE recruitment_gate_followup_operations;DELETE FROM ig_schema_migrations WHERE name='0041_gate_followup_operations.sql';INSERT INTO ig_accounts(id,ig_user_id,access_token,created_at,updated_at) VALUES('a','111','fake','2026-01-01','2026-01-01');INSERT INTO followers(id,igsid,account_id) VALUES(1,'person','a');INSERT INTO engagement_gates(id,name,trigger_type,initial_dm_text,follow_reminder_dm_text,reward_dm_text,account_id) VALUES('g','g','dm_keyword','a','b','c','a');INSERT INTO gate_deliveries(id,gate_id,follower_id,igsid,status,followup_step_sent,metadata) VALUES('d','g',1,'person','delivered',3,'{\"recruitment_followup\":{\"step\":2,\"version\":\"legacy\"}}')");const before=db.prepare('SELECT * FROM gate_deliveries').get();await applyMigrations(adapter(db));assert.deepEqual(db.prepare('SELECT * FROM gate_deliveries').get(),before);assert.equal(db.prepare('SELECT COUNT(*) n FROM recruitment_gate_followup_operations').get().n,0);}finally{db.close();}});
+
+// Whole-table duplicate protection must not accept partial indexes.
+const partialIndexSets={
+ recruitment_gate_operations:[['account_id','operation_key'],['account_id','event_key']],
+ recruitment_gate_cta_operations:[['account_id','operation_key'],['account_id','event_key'],['account_id','delivery_id']],
+ recruitment_gate_followup_operations:[['account_id','operation_key'],['account_id','delivery_id','step_index']],
+};
+async function partialIndexFixture(){
+ const db=new DatabaseSync(':memory:');
+ await applyMigrations({repoDir,query:async sql=>db.prepare(sql).all(),execute:async sql=>{db.exec('BEGIN');try{for(const s of splitSql(sql))db.exec(s);db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}},log(){}});
+ return db;
+}
+for(const [table,pairs]of Object.entries(partialIndexSets))for(const partial of pairs)test(`${table}: partial ${partial.join('/')} is not full duplicate protection`,async()=>{
+ const db=await partialIndexFixture();try{
+  db.exec(`ALTER TABLE ${table} RENAME TO old_${table}`);
+  const cols=db.prepare(`PRAGMA table_info(old_${table})`).all().map(c=>c.name+' '+c.type);
+  db.exec(`CREATE TABLE ${table}(${cols.join(',')})`);
+  pairs.forEach((columns,i)=>db.exec(`CREATE UNIQUE INDEX repair_${i} ON ${table}(${columns.join(',')})${columns===partial?" WHERE state='confirmed'":''}`));
+  await assert.rejects(verifyLatestSchema(async sql=>db.prepare(sql).all()),/uniqueness/);
+ }finally{db.close();}
+});
+test('form receipt partial index cannot certify whole-table uniqueness',async()=>{
+ const db=await partialIndexFixture();try{
+  db.exec('DROP INDEX idx_form_submission_request;CREATE UNIQUE INDEX idx_form_submission_request ON form_submissions(form_id,request_key) WHERE request_key IS NOT NULL AND form_id>100');
+  await assert.rejects(verifyLatestSchema(async sql=>db.prepare(sql).all()),/form request uniqueness/);
+ }finally{db.close();}
+});
