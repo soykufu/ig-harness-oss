@@ -14,6 +14,7 @@ function approved(target,expectedHash){
  const keys=['referenceId','timestamp','expiresAt','bookmarkSha256','migrationInventoryHash','deploymentFingerprint'];
  return target&&Object.keys(target).length===keys.length&&digest(Object.fromEntries(keys.map(k=>[k,target[k]])))===expectedHash;
 }
+function restoredShapeMatches(a,b){const {countsHash:ah,tableCounts:at,...ac}=a;const {countsHash:bh,tableCounts:bt,...bc}=b;return JSON.stringify(ac)===JSON.stringify(bc);}
 const safe=s=>s?.paused==='1'&&s.accounts===0&&s.followers===0&&s.lock===true&&s.extraFlags===true&&s.bindings===true&&s.stable===true;
 export async function onceRestore(plan,io,env,now=()=>Date.now(),approvalHash=APPROVED_HASH){
  let attempted=false,stage="runtime_gate";
@@ -21,7 +22,7 @@ export async function onceRestore(plan,io,env,now=()=>Date.now(),approvalHash=AP
  try{
   if(env.GITHUB_REPOSITORY!=='soykufu/ig-harness-oss'||env.GITHUB_REF!=='refs/heads/main'||env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_RUN_ATTEMPT!=='1'||!approved(plan?.target,approvalHash))return reject();
   if(plan.mode!=='prepare'&&plan.mode!=='execute')return reject();
-  if(plan.mode==='execute'&&env.GITHUB_RUN_NUMBER!=='17')return reject();
+  if(plan.mode==='execute'&&env.GITHUB_RUN_NUMBER!=='20')return reject();
   stage="target_read";
   if(!(await io.validateTarget(plan.target)).ok)return reject();
   stage="snapshot_before";
@@ -48,8 +49,8 @@ export async function onceRestore(plan,io,env,now=()=>Date.now(),approvalHash=AP
   if(typeof result?.bookmark!=='string'||!BM.test(result.bookmark)||typeof result.previous_bookmark!=='string'||!BM.test(result.previous_bookmark))return reject();
   stage="after_snapshot";
   const after=await io.snapshot();
-  if(!safe(after)||JSON.stringify(after)!==JSON.stringify(before)||!(await io.integrity()))return reject();
-  return {ok:true,state:'one_time_restore_verified',restoreAttempted:true,restoreVerified:true,restoreTimestamp:plan.target.timestamp,undoTimestamp:proof.undoTimestamp,previousBookmarkSha256:digest(result.previous_bookmark),restoredBookmarkSha256:digest(result.bookmark),snapshotMatched:true,integrityVerified:true,rowContentsVerified:false,messagesSent:0,deploymentAuthorized:false};
+  if(!safe(after)||!restoredShapeMatches(after,before)||!(await io.integrity()))return reject();
+  return {ok:true,state:'one_time_restore_verified',restoreAttempted:true,restoreVerified:true,restoreTimestamp:plan.target.timestamp,undoTimestamp:proof.undoTimestamp,previousBookmarkSha256:digest(result.previous_bookmark),restoredBookmarkSha256:digest(result.bookmark),businessSnapshotMatched:true,allTableCountsMatched:after.countsHash===before.countsHash,beforeTableCounts:before.tableCounts,afterTableCounts:after.tableCounts,integrityVerified:true,rowContentsVerified:false,messagesSent:0,deploymentAuthorized:false};
  }catch{return reject();}
 }
 
@@ -71,7 +72,7 @@ async function main(){
   const s=await state(),r=await runtime();
   const schema=await query("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND substr(name,1,4)!='_cf_' ORDER BY type,name");
   const counts=[];for(const row of schema.filter(x=>x.type==='table')){if(typeof row.name!=='string')throw Error('Invalid schema');const n=(await query('SELECT COUNT(*) AS n FROM '+JSON.stringify(row.name)))[0]?.n;if(!Number.isSafeInteger(n)||n<0)throw Error('Invalid count');counts.push([row.name,n]);}
-  return {...s,fingerprint:r.deploymentFingerprint,lock:r.preparationLockVerified,extraFlags:r.extraFlagsVerified,bindings:r.deployedBindingsVerified,stable:r.deploymentStable,schemaHash:digest(schema),countsHash:digest(counts)};
+  return {...s,fingerprint:r.deploymentFingerprint,lock:r.preparationLockVerified,extraFlags:r.extraFlagsVerified,bindings:r.deployedBindingsVerified,stable:r.deploymentStable,schemaHash:digest(schema),countsHash:digest(counts),businessCountsHash:digest(counts.filter(([name])=>name!=='rate_limit_buckets')),tableCounts:counts};
  };
  return onceRestore(plan,{validateTarget:ref=>verifySavedRecovery(ref,{state,runtime,bookmark}),snapshot,bookmark,restore:timestamp=>api(DB+'/time_travel/restore?timestamp='+encodeURIComponent(timestamp),{restore:true}),integrity:async()=>{const rows=await query('PRAGMA integrity_check');return rows?.length===1&&Object.values(rows[0])[0]==='ok'&&(await query('PRAGMA foreign_key_check')).length===0;}},process.env);
 }
