@@ -177,3 +177,33 @@ test('form receipt partial index cannot certify whole-table uniqueness',async()=
   await assert.rejects(verifyLatestSchema(async sql=>db.prepare(sql).all()),/form request uniqueness/);
  }finally{db.close();}
 });
+
+// Rehearse the currently observed 27 -> 41 migration boundary using synthetic
+// configuration only. This is not a production export or a live restore.
+async function stopped27Fixture(){
+ const db=new DatabaseSync(':memory:');
+ await assert.rejects(applyMigrations(adapter(db,sql=>sql.includes('CREATE TABLE IF NOT EXISTS recruitment_outbound_control'))),/0028_recruitment_outbound_ledger/);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM ig_schema_migrations').get().n,27);
+ db.exec("INSERT INTO integration_settings(key,value) VALUES('outbound_paused','1'),('synthetic_preservation','keep');INSERT INTO scenarios(id,name,trigger_type,is_active) VALUES(51,'synthetic-disabled','manual',0);INSERT INTO scenario_steps(id,scenario_id,step_order,message_type,body) VALUES(71,51,1,'text','synthetic-only');INSERT INTO forms(id,name,fields,is_active) VALUES(61,'synthetic-form','[]',0)");
+ return db;
+}
+function oldRows(db){return Object.fromEntries(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name!='ig_schema_migrations'").all().map(({name})=>{const columns=db.prepare('PRAGMA table_info('+JSON.stringify(name)+')').all().map(c=>c.name);return[name,{columns,rows:db.prepare('SELECT '+columns.map(JSON.stringify).join(',')+' FROM '+JSON.stringify(name)).all()}];}));}
+function assertOldRows(db,before){for(const [name,{columns,rows}]of Object.entries(before))assert.deepEqual(db.prepare('SELECT '+columns.map(JSON.stringify).join(',')+' FROM '+JSON.stringify(name)).all(),rows,'preserve '+name);}
+test('27 -> 41 preserves every original column, configuration and stopped/unconnected state',async()=>{
+ const db=await stopped27Fixture();try{
+  const before=oldRows(db);await applyMigrations(adapter(db));assertOldRows(db,before);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM ig_schema_migrations').get().n,41);
+  assert.equal(db.prepare("SELECT value FROM integration_settings WHERE key='outbound_paused'").get().value,'1');
+  for(const table of ['ig_accounts','followers','recruitment_outbound_control','recruitment_outbound_operations','recruitment_manual_intents','recruitment_human_reply_contracts'])assert.equal(db.prepare('SELECT COUNT(*) n FROM '+table).get().n,0);
+  assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);
+  await applyMigrations(adapter(db));assertOldRows(db,before);
+ }finally{db.close();}
+});
+for(let number=28;number<=41;number++)test(`27 -> 41 rolls back migration ${number} before its ledger marker and resumes without configuration loss`,async()=>{
+ const db=await stopped27Fixture();try{
+  const before=oldRows(db),prefix=String(number).padStart(4,'0');
+  await assert.rejects(applyMigrations(adapter(db,sql=>sql.includes('INSERT INTO ig_schema_migrations')&&sql.includes("'"+prefix+'_'))),new RegExp('Migration failed: '+prefix));
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM ig_schema_migrations').get().n,number-1);assertOldRows(db,before);
+  await applyMigrations(adapter(db));assertOldRows(db,before);assert.equal(db.prepare('SELECT COUNT(*) n FROM ig_schema_migrations').get().n,41);
+ }finally{db.close();}
+});
