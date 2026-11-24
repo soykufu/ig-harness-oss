@@ -54,6 +54,16 @@ it('connects the real queued webhook path and clears only the processed event pa
  const f=await fixture();f.sqlite.exec("UPDATE webhook_events SET status='pending',started_at=NULL");await processQueuedWebhooks(f.db,f.client as any,f.account,undefined,f.env);expect(f.fetch).toHaveBeenCalledOnce();expect(f.sqlite.prepare('SELECT state FROM recruitment_gate_cta_operations').get()?.state).toBe('sent');expect(f.sqlite.prepare('SELECT status,payload FROM webhook_events').get()).toMatchObject({status:'completed',payload:null});
 });
 
+it('preserves the real pending source without CTA or fallback work while preparation is locked',async()=>{
+ const f=await fixture();f.sqlite.exec("UPDATE webhook_events SET status='pending',started_at=NULL;INSERT INTO scenarios(id,name,trigger_type,trigger_keyword,account_id,is_active) VALUES(1,'fallback','dm_keyword','guide','a',1)");
+ const before=f.sqlite.prepare('SELECT * FROM webhook_events').get();
+ await processQueuedWebhooks(f.db,f.client as any,f.account,undefined,{...f.env,OUTBOUND_PREPARATION_LOCK:'1'});
+ expect(f.sqlite.prepare('SELECT * FROM webhook_events').get()).toEqual(before);
+ expect(f.sqlite.prepare('SELECT COUNT(*) n FROM recruitment_gate_cta_operations').get()?.n).toBe(0);
+ expect(f.sqlite.prepare('SELECT COUNT(*) n FROM gate_deliveries').get()?.n).toBe(0);
+ expect(f.sqlite.prepare('SELECT COUNT(*) n FROM follower_scenarios').get()?.n).toBe(0);
+ expect(f.fetch).not.toHaveBeenCalled();
+});
 it('does not enroll a fallback scenario after an enforced CTA failure',async()=>{
  const f=await fixture();f.sqlite.exec("UPDATE webhook_events SET status='pending',started_at=NULL;INSERT INTO scenarios(id,name,trigger_type,trigger_keyword,account_id,is_active) VALUES(1,'fallback','dm_keyword','guide','a',1);INSERT INTO scenario_steps(id,scenario_id,step_order,delay_minutes,message_type,body) VALUES(1,1,1,0,'text', '{}')");
  f.sqlite.prepare('UPDATE engagement_gates SET initial_dm_text=?').run('x'.repeat(161));
