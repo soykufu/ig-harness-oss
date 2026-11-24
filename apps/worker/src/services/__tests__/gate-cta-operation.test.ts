@@ -56,7 +56,8 @@ it('connects the real queued webhook path and clears only the processed event pa
 
 it('does not enroll a fallback scenario after an enforced CTA failure',async()=>{
  const f=await fixture();f.sqlite.exec("UPDATE webhook_events SET status='pending',started_at=NULL;INSERT INTO scenarios(id,name,trigger_type,trigger_keyword,account_id,is_active) VALUES(1,'fallback','dm_keyword','guide','a',1);INSERT INTO scenario_steps(id,scenario_id,step_order,delay_minutes,message_type,body) VALUES(1,1,1,0,'text', '{}')");
- await processQueuedWebhooks(f.db,f.client as any,f.account,undefined,{...f.env,OUTBOUND_PREPARATION_LOCK:'1'});expect(f.fetch).not.toHaveBeenCalled();expect(f.sqlite.prepare('SELECT COUNT(*) n FROM follower_scenarios').get()?.n).toBe(0);expect(f.sqlite.prepare('SELECT status FROM webhook_events').get()?.status).toBe('uncertain');
+ f.sqlite.prepare('UPDATE engagement_gates SET initial_dm_text=?').run('x'.repeat(161));
+ await processQueuedWebhooks(f.db,f.client as any,f.account,undefined,f.env);expect(f.fetch).not.toHaveBeenCalled();expect(f.sqlite.prepare('SELECT COUNT(*) n FROM follower_scenarios').get()?.n).toBe(0);expect(f.sqlite.prepare('SELECT status FROM webhook_events').get()?.status).toBe('uncertain');
 });
 it('does not use a non-story message as proof for a story CTA',async()=>{
  const f=await fixture('story');f.sqlite.exec("UPDATE webhook_events SET payload=json_remove(payload,'$.message.attachments')");await expect(f.run()).rejects.toThrow('story source');expect(f.fetch).not.toHaveBeenCalled();
