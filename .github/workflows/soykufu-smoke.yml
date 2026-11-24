@@ -24,7 +24,7 @@ on:
         default: ''
   push:
     branches: [main]
-    paths: ['.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs', 'scripts/stopped-saved-recovery.mjs', 'scripts/stopped-saved-recovery.test.mjs', 'scripts/stopped-once-restore.mjs', 'scripts/stopped-once-restore.test.mjs', 'scripts/stopped-migration-review.mjs', 'scripts/stopped-migration-review.test.mjs', 'scripts/stopped-database-envelope.mjs', 'scripts/stopped-database-envelope.test.mjs', 'scripts/stopped-export-drill.mjs', 'scripts/stopped-export-drill.test.mjs', 'scripts/stopped-backup-preflight.mjs', 'scripts/stopped-backup-preflight.test.mjs']
+    paths: ['.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs', 'scripts/stopped-saved-recovery.mjs', 'scripts/stopped-saved-recovery.test.mjs', 'scripts/stopped-once-restore.mjs', 'scripts/stopped-once-restore.test.mjs', 'scripts/stopped-migration-review.mjs', 'scripts/stopped-migration-review.test.mjs', 'scripts/stopped-database-envelope.mjs', 'scripts/stopped-database-envelope.test.mjs', 'scripts/stopped-export-drill.mjs', 'scripts/stopped-export-drill.test.mjs', 'scripts/stopped-backup-preflight.mjs', 'scripts/stopped-backup-preflight.test.mjs', 'scripts/recovery-bucket-guard.mjs', 'scripts/recovery-bucket-guard.test.mjs']
 permissions:
   contents: read
 jobs:
@@ -79,6 +79,8 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           NATIVE_RECOVERY_EVIDENCE: ${{ inputs.native_migration_review }}
         run: node scripts/stopped-migration-review.mjs
+      - name: Test reserved recovery namespace protection offline
+        run: node --test scripts/recovery-bucket-guard.test.mjs
       - name: Test backup preflight without credentials
         run: node --test scripts/stopped-backup-preflight.test.mjs
       - name: Read deployed backup namespace and key presence only
