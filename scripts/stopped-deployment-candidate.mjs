@@ -2,9 +2,9 @@ import {readFile,readdir,mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';import {join,resolve,relative} from 'node:path';import {spawnSync} from 'node:child_process';import {createHash} from 'node:crypto';import {pathToFileURL} from 'node:url';
 import {readStoppedRuntimeSnapshot,isStoppedRuntimeReadPath} from './stopped-runtime-snapshot.mjs';import {readStoppedInstallationSnapshot} from './stopped-installation-snapshot.mjs';
 const A='e76a3f504309ca9289d8dfa3ee504502',D='e55c3b84-ea9a-48fd-a7a3-08253089d295',NAME='soykufu-ig-harness-20261119',W='/accounts/'+A+'/workers/scripts/'+NAME;
-// Accepted receiving backend run45329490585 with independent read-only audit45330175544; registration45323225017 is preserved.
+// Accepted receiving backend45329490585/audit45330175544, encrypted App Secret45330744132 and public app ID45331593999; registration45323225017 is preserved.
 // A later deployment must be reconciled explicitly, never learned automatically.
-export const CANDIDATE_BASELINE_FINGERPRINT='9c96599e2e5abdd130ee0be1caa37d2c44bb9b155a6bdde98db36bec14e5937f';
+export const CANDIDATE_BASELINE_FINGERPRINT='154f4550c1a25a023cbc2e2b01239e07bddd138e0a6095f4dd7a6ceee3e868e6';
 const FP=CANDIDATE_BASELINE_FINGERPRINT;
 export function candidateBaselineReady(runtime,installation){
  const m=installation?.migrationInventory;

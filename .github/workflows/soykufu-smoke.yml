@@ -2,8 +2,8 @@ name: SOY-KUFU verify stopped admin
 on:
   workflow_dispatch:
     inputs:
-      receiving_app_id_once:
-        description: 'Add the approved fixed public Meta app ID once; inherit all existing bindings without changing secrets or subscriptions'
+      receiving_backend_audit:
+        description: 'Audit accepted receiving backend and actual paused guardrails only; never replace, subscribe or send'
         type: boolean
         default: false
       receiving_preflight:
@@ -176,10 +176,9 @@ jobs:
         run: node --test scripts/stopped-receiving-secret-once.test.mjs
       - name: Test stopped public Meta app ID settings boundary
         run: node --test scripts/stopped-receiving-app-id-once.test.mjs
-      - name: Configure approved fixed public Meta app ID once
-        if: github.event_name == 'workflow_dispatch' && inputs.receiving_app_id_once == true && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss'
+      - name: Audit accepted receiving backend without replacement
+        if: github.event_name == 'workflow_dispatch' && inputs.receiving_backend_audit == true && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}
-          APPROVED_RECEIVING_APP_ID: '1'
-        run: node scripts/stopped-receiving-app-id-once.mjs
+        run: node scripts/stopped-receiving-backend-audit.mjs
