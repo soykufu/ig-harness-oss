@@ -24,6 +24,8 @@ export async function inspectAppWebhook(env,fetchImpl=fetch){
   if(app.id!==APP_ID)return{ok:false,state:'app_identity_mismatch'};
   const subscriptions=await get(`${APP_ID}/subscriptions`);
   if(!Array.isArray(subscriptions.data))return{ok:false,state:'subscription_response_unverified'};
+  const unrelated=subscriptions.data.filter(row=>row?.object!=='instagram'&&row?.object!=='page');
+  const unrelatedFieldShapeUnverified=unrelated.some(row=>!Array.isArray(row?.fields)||row.fields.some(f=>{const n=typeof f==='string'?f:f?.name;return typeof n!=='string'||!/^[a-z_]{1,64}$/.test(n);}));
   const relevant=subscriptions.data.filter(row=>row?.object==='instagram'||row?.object==='page');
   const objects=relevant.map(row=>{
    const fields=Array.isArray(row.fields)?row.fields.map(field=>typeof field==='string'?field:field?.name):[];
@@ -35,7 +37,7 @@ export async function inspectAppWebhook(env,fetchImpl=fetch){
   // Observation only; never combine fields from different callbacks/objects
   // into an asserted complete receiving subscription.
   return{ok:true,state:'app_webhook_observed',appIdentityVerified:true,
-   listingIncomplete:Boolean(subscriptions.paging?.next),objects,
+   listingIncomplete:Boolean(subscriptions.paging?.next),objects,appObjectCount:subscriptions.data.length,unrelatedObjectCount:unrelated.length,unrelatedFieldShapeUnverified,
    receivingVerified:false,subscriptionAttempted:false,callbackRequestAttempted:false,
    credentialsInstalled:false,messagesSent:0};
  }catch{return{ok:false,state:'app_read_failed',subscriptionAttempted:false,messagesSent:0};}

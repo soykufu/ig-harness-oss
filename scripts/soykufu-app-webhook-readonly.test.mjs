@@ -30,3 +30,5 @@ test('HTTP errors do not read bodies or retry',async()=>{let calls=0;const r=awa
 for(const mode of ['throw','invalid-json','api-error','oversize'])test(`no transport disclosure ${mode}`,async()=>{
  let calls=0;const r=await inspectAppWebhook(env,async()=>{calls++;if(mode==='throw')throw Error(secret);if(mode==='invalid-json')return new Response(secret);if(mode==='api-error')return new Response(JSON.stringify({error:{message:secret}}));return new Response('x'.repeat(65537));});assert.equal(r.ok,false);assert.equal(calls,1);assert.ok(!JSON.stringify(r).includes(secret));
 });
+
+test('reports only counts for unrelated subscription shapes without exposing their values',async()=>{const marker='private-unrelated-field';const a=api([{id:APP_ID},{data:[{object:'threads',fields:[marker]}]}]);const r=await inspectAppWebhook(env,a.fetch);assert.equal(r.appObjectCount,1);assert.equal(r.unrelatedObjectCount,1);assert.equal(r.unrelatedFieldShapeUnverified,true);assert.deepEqual(r.objects,[]);assert.doesNotMatch(JSON.stringify(r),new RegExp(marker));});
