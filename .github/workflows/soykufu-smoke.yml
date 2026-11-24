@@ -2,6 +2,11 @@ name: SOY-KUFU verify stopped admin
 on:
   workflow_dispatch:
     inputs:
+      approved_connection_phase:
+        description: 'Owner approved 2026-11-24; fixed one-time backend then encrypted account registration; never subscribe or send'
+        type: choice
+        options: [none, backend, registration]
+        default: none
       meta_pair_readonly:
         description: 'Check saved user token belongs to the fixed Meta app only; no registration, setup or sending'
         type: boolean
@@ -67,6 +72,8 @@ jobs:
         run: node --test scripts/stopped-connection-readiness.test.mjs
       - name: Test app webhook read-only boundaries without credentials
         run: node --test scripts/soykufu-app-webhook-readonly.test.mjs
+      - name: Test approved stopped connection boundaries without credentials
+        run: node --test scripts/stopped-account-preparation-apply.test.mjs scripts/stopped-account-registration-once.test.mjs
       - name: Test Meta token app pairing without credentials
         run: node --test scripts/soykufu-meta-pair-readonly.test.mjs
       - name: Check saved Meta credential pairing only when explicitly requested
@@ -130,14 +137,14 @@ jobs:
       - name: Test stopped candidate boundaries offline
         run: node --test scripts/stopped-deployment-candidate.test.mjs
       - uses: pnpm/action-setup@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
+        if: github.event_name == 'workflow_dispatch' && (inputs.deployment_candidate == true || inputs.approved_connection_phase == 'backend')
         with:
           version: 9.15.4
       - name: Install candidate build dependencies
-        if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
+        if: github.event_name == 'workflow_dispatch' && (inputs.deployment_candidate == true || inputs.approved_connection_phase == 'backend')
         run: pnpm install --frozen-lockfile
       - name: Build candidate dependencies
-        if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
+        if: github.event_name == 'workflow_dispatch' && (inputs.deployment_candidate == true || inputs.approved_connection_phase == 'backend')
         run: pnpm --filter @ig-harness/shared --filter @ig-harness/ig-sdk build
       - name: Read settings and build deployment candidate without mutation
         if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
@@ -147,3 +154,20 @@ jobs:
       - name: Test scoped backend replacement boundaries offline
         run: node --test scripts/stopped-backend-apply.test.mjs
 
+
+      - name: Apply specifically approved stopped account preparation backend once
+        if: github.event_name == 'workflow_dispatch' && inputs.approved_connection_phase == 'backend' && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}
+          APPROVED_CONNECTION_PHASE: ${{ inputs.approved_connection_phase }}
+        run: node scripts/stopped-account-preparation-apply.mjs
+      - name: Exchange and save specifically approved stopped account once
+        if: github.event_name == 'workflow_dispatch' && inputs.approved_connection_phase == 'registration' && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}
+          IG_META_APP_SECRET: ${{ secrets.IG_META_APP_SECRET }}
+          IG_META_USER_ACCESS_TOKEN: ${{ secrets.IG_META_USER_ACCESS_TOKEN }}
+          APPROVED_CONNECTION_PHASE: ${{ inputs.approved_connection_phase }}
+        run: node scripts/stopped-account-registration-once.mjs
