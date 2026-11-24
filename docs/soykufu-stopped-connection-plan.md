@@ -34,9 +34,11 @@ duplicate objects and incomplete pagination without merging them into success.
 - Deployment fingerprint: `693814e3519ac1d1521ab0fb40288043d18952cf32cbee232d784fa5f72ac145`.
 - D1: 41 matching migrations, outbound stop=1, preparation lock=1, accounts=0,
   followers=0; independently checked in run 45310545013.
-- Meta identity/grants already verified in run 45201509425. Existing GitHub
-  `IG_META_USER_ACCESS_TOKEN` stays in the official runner. Do not ask the owner
-  to authenticate or save this token again.
+- Meta identity/grants verified in run 45201509425. A later observed expiry in
+  run 45315421035 was resolved by the owner's existing-secret update. New run
+  45319413768 verified the same app, validity, fixed Page/IG and five grants.
+  `IG_META_USER_ACCESS_TOKEN` stays in the official runner. Do not repeat that
+  completed update without new evidence of invalidation.
 
 ## Distinct phases
 
@@ -112,4 +114,45 @@ https://developers.facebook.com/docs/graph-api/reference/debug_token/
 
 App Secret saving and app inspection completed in official run45314455517:
 appIdentityVerified=true, listingIncomplete=false, objects=[]; no subscriptions
-were activated. Do not ask for the same App Secret or user token again.
+were activated. Do not ask for the same App Secret again. The user-token
+expiry was separately resolved and verified in run 45319413768.
+
+## Token lifecycle and prospective replacement validation
+
+Run 45319413768 reported tokenExpiryWithin7Days=true, not permanent validity.
+Meta's server-side Facebook Login exchange can produce a user token lasting
+about 60 days; it requires a currently valid user token. Do not apply the
+Instagram Login refresh endpoint or system-user rotation to this connection.
+Reference reviewed 2026-11-24:
+https://developers.facebook.com/documentation/facebook-login/guides/access-tokens/get-long-lived
+
+`assessMetaTokenLifecycle` now classifies fresh debug metadata inside the
+official pair check. It returns safe lifetime bands only. Unknown/zero expiry,
+non-USER token, invalid identity/scopes, expired access, and a remaining window
+of 15 minutes or less hold exchange review. A token beyond seven days requires
+monitoring, not an immediate exchange. No network or mutation is added.
+
+`assessMetaTokenReplacement` is a pure pre-storage gate for a future executor.
+It compares the original and prospective token's private subject internally,
+exact full scopes, and exact granular target sets (order independent). Missing
+target metadata is unknown, not equivalent to an empty list. It requires a
+strictly improved lifetime beyond seven and at most 61 days, unchanged data
+access lifetime with more than seven days remaining, and the same valid USER
+app identity. Outputs never include tokens, subjects, target IDs or raw dates.
+Even success keeps storageAuthorized/registrationAuthorized=false.
+
+The future execution scope must be authorized separately: one server-side
+exchange for app2224712165014101 in the existing official runner, same scopes
+and fixed Page/IG, followed by validation before encrypted persistence. The
+current code has **no exchange transport, storage sink, new workflow input,
+credential write, account registration, subscription or release**. Do not
+call the pure gate an implemented rotation service or an unattended lifetime
+guarantee. Security events can invalidate a token before its expected expiry.
+
+Before persistence, require a fresh direct metadata recheck, then re-read the
+fixed Page/IG and grants using the candidate. Never pass a raw token through a
+workflow input/output, artifact, chat or log. Keep the old credential intact
+until acceptance; do not revoke it or retry an unknown mutation outcome.
+Registration still needs the explicit subscribeWebhooks=false contract and
+business-row/backfill safeguards above. A future server-side exchange must
+not quietly rewrite the GitHub secret or use its own success as storage consent.

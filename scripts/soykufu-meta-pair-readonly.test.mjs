@@ -1,10 +1,47 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {inspectMetaPair,PAIR_SCOPES} from './soykufu-meta-pair-readonly.mjs';
+import {inspectMetaPair,PAIR_SCOPES,assessMetaTokenLifecycle,assessMetaTokenReplacement} from './soykufu-meta-pair-readonly.mjs';
 const token='fixture+token&with?characters',secret='a'.repeat(32),time=Date.parse('2026-11-24T00:00:00Z');
 const env={GITHUB_REPOSITORY:'soykufu/ig-harness-oss',GITHUB_REF:'refs/heads/main',GITHUB_EVENT_NAME:'workflow_dispatch',IG_META_APP_SECRET:secret,IG_META_USER_ACCESS_TOKEN:token};
-const data=()=>({app_id:'2224712165014101',is_valid:true,scopes:[...PAIR_SCOPES],expires_at:time/1000+86400,data_access_expires_at:time/1000+864000,user_id:'private-user'});
+const data=()=>({app_id:'2224712165014101',type:'USER',is_valid:true,scopes:[...PAIR_SCOPES],granular_scopes:[{scope:'pages_show_list',target_ids:['fixed-page']}],expires_at:time/1000+86400,data_access_expires_at:time/1000+8640000,user_id:'private-user'});
 const response=body=>async()=>new Response(JSON.stringify({data:body}));
+const seconds=time/1000,day=86400;
+const replacement=()=>({...data(),expires_at:seconds+60*day});
+test('lifecycle labels current short token without authorizing exchange or storage',()=>{
+ const r=assessMetaTokenLifecycle(data(),seconds);
+ assert.deepEqual(r,{state:'exchange_review_ready',reason:null,remainingBand:'within_24_hours',exchangeReviewReady:true,exchangeAuthorized:false,storageAuthorized:false});
+ assert.equal(assessMetaTokenLifecycle(replacement(),seconds).state,'validity_monitoring');
+});
+for(const [remaining,band]of [[901,'within_1_hour'],[3600,'within_1_hour'],[3601,'within_24_hours'],[day,'within_24_hours'],[day+1,'within_7_days'],[7*day,'within_7_days'],[7*day+1,'beyond_7_days']])test(`lifetime threshold ${remaining}`,()=>assert.equal(assessMetaTokenLifecycle({...data(),expires_at:seconds+remaining},seconds).remainingBand,band));
+for(const patch of [{type:'PAGE'},{type:undefined},{app_id:'other'},{is_valid:false},{error:{message:token}},{scopes:[...PAIR_SCOPES,PAIR_SCOPES[0]]},{scopes:[...PAIR_SCOPES,'']},{expires_at:0},{expires_at:undefined},{expires_at:seconds},{expires_at:seconds+900},{expires_at:'9999999999'},{data_access_expires_at:0},{data_access_expires_at:seconds+900}])test(`lifecycle holds ${JSON.stringify(patch)}`,()=>{
+ const r=assessMetaTokenLifecycle({...data(),...patch},seconds);assert.equal(r.state,'held');assert.equal(r.exchangeReviewReady,false);assert.equal(r.storageAuthorized,false);assert.ok(!JSON.stringify(r).includes(token));
+});
+for(const now of [NaN,Infinity,0,-1,seconds+.5])test(`invalid lifecycle clock ${now}`,()=>assert.equal(assessMetaTokenLifecycle(data(),now).state,'held'));
+test('replacement accepts same subject/scopes/targets with documented lifetime range but grants no storage permission',()=>{
+ const before=data(),after={...replacement(),scopes:[...PAIR_SCOPES].reverse()};
+ const r=assessMetaTokenReplacement(before,after,seconds);
+ assert.deepEqual(r,{state:'replacement_metadata_verified',reason:null,replacementVerified:true,storageAuthorized:false,registrationAuthorized:false});
+ for(const value of ['private-user','fixed-page',token,secret])assert.ok(!JSON.stringify(r).includes(value));
+ assert.equal(before.expires_at,seconds+day);
+});
+for(const patch of [{user_id:'other-user'},{user_id:undefined},{type:'PAGE'},{app_id:'other'},{is_valid:false},{expires_at:seconds+day},{expires_at:seconds+7*day},{expires_at:seconds+61*day+1},{expires_at:0},{scopes:[...PAIR_SCOPES,'new_permission']},{scopes:PAIR_SCOPES.slice(1)},{granular_scopes:undefined},{granular_scopes:[{scope:'pages_show_list',target_ids:['other-page']}]},{granular_scopes:[{scope:'pages_show_list',target_ids:['fixed-page','other-page']}]},{granular_scopes:[{scope:'pages_show_list',target_ids:['fixed-page','fixed-page']}]},{granular_scopes:[{scope:'pages_show_list',target_ids:['fixed-page']},{scope:'pages_show_list',target_ids:['fixed-page']}]},{data_access_expires_at:seconds+101*day},{data_access_expires_at:seconds+90*day}])test(`replacement rejects ${JSON.stringify(patch)}`,()=>{
+ const r=assessMetaTokenReplacement(data(),{...replacement(),...patch},seconds);assert.equal(r.state,'held');assert.equal(r.replacementVerified,false);assert.equal(r.storageAuthorized,false);
+});
+test('expiry between validation stages cannot authorize a replacement',()=>assert.equal(assessMetaTokenReplacement(data(),replacement(),seconds+day).state,'held'));
+test('unknown initial subject and target metadata cannot be adopted',()=>{
+ assert.equal(assessMetaTokenReplacement({...data(),user_id:''},replacement(),seconds).state,'held');
+ assert.equal(assessMetaTokenReplacement({...data(),granular_scopes:undefined},replacement(),seconds).state,'held');
+});
+test('a token already beyond seven days must not be repeatedly exchanged',()=>assert.equal(assessMetaTokenReplacement({...data(),expires_at:seconds+8*day},replacement(),seconds).reason,'exchange_not_needed'));
+test('a nearly expired data-access grant cannot be hidden by a longer token',()=>{
+ const before={...data(),data_access_expires_at:seconds+7*day};
+ assert.equal(assessMetaTokenReplacement(before,{...replacement(),data_access_expires_at:before.data_access_expires_at},seconds).reason,'data_access_renewal_required');
+});
+test('target-set ordering does not create a false scope change',()=>{
+ const targets=[{scope:'pages_show_list',target_ids:['a','b']},{scope:'business_management',target_ids:[]}];
+ const reverse=[{scope:'business_management',target_ids:[]},{scope:'pages_show_list',target_ids:['b','a']}];
+ assert.equal(assessMetaTokenReplacement({...data(),granular_scopes:targets},{...replacement(),granular_scopes:reverse},seconds).replacementVerified,true);
+});
 test('one official GET checks the pair; query/errors/identity never returned',async()=>{
  let calls=0;const r=await inspectMetaPair(env,async(url,options)=>{calls++;const u=new URL(url);assert.equal(u.origin,'https://graph.facebook.com');assert.equal(u.pathname,'/v25.0/debug_token');assert.equal(u.searchParams.get('input_token'),token);assert.equal(u.searchParams.has('access_token'),false);assert.equal(options.method,'GET');assert.equal(options.redirect,'error');assert.equal(options.headers.Authorization,`Bearer 2224712165014101|${secret}`);return new Response(JSON.stringify({data:data()}));},()=>time);
  assert.equal(calls,1);assert.equal(r.state,'token_app_pair_verified');assert.equal(r.tokenExpiryWithin7Days,true);assert.equal(r.dataAccessExpiryWithin7Days,false);assert.equal(r.credentialsInstalled,false);assert.equal(r.registrationAttempted,false);assert.equal(r.targetAssetRechecked,false);for(const marker of [token,secret,'private-user','debug_token'])assert.ok(!JSON.stringify(r).includes(marker));

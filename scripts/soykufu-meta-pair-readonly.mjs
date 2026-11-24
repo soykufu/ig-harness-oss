@@ -1,6 +1,59 @@
 import {pathToFileURL} from 'node:url';
 const APP_ID='2224712165014101';
 export const PAIR_SCOPES=Object.freeze(['business_management','instagram_basic','instagram_manage_messages','pages_read_engagement','pages_show_list']);
+const DAY=86400;
+function normalizedSet(values){
+ if(!Array.isArray(values)||values.some(v=>typeof v!=='string'||!v||v!==v.trim())||new Set(values).size!==values.length)return null;
+ return [...values].sort();
+}
+function granularTargets(value){
+ if(!Array.isArray(value))return null;
+ const names=new Set(),rows=[];
+ for(const row of value){
+  if(!row||typeof row.scope!=='string'||!row.scope||names.has(row.scope))return null;
+  const targets=normalizedSet(row.target_ids);if(!targets)return null;
+  names.add(row.scope);rows.push([row.scope,targets]);
+ }
+ return JSON.stringify(rows.sort((a,b)=>a[0].localeCompare(b[0])));
+}
+// Pure metadata inspection: never exchange, persist, return an identity or
+// authorize installation. A current is_valid result is not a lifetime promise.
+export function assessMetaTokenLifecycle(data,nowSeconds){
+ const held=reason=>({state:'held',reason,exchangeReviewReady:false,exchangeAuthorized:false,storageAuthorized:false});
+ if(!Number.isSafeInteger(nowSeconds)||nowSeconds<=0)return held('clock_unverified');
+ if(data?.error||data?.is_valid!==true||data?.app_id!==APP_ID||data?.type!=='USER')return held('user_token_identity_unverified');
+ const scopes=normalizedSet(data.scopes);
+ if(!scopes||PAIR_SCOPES.some(scope=>!scopes.includes(scope)))return held('scopes_unverified');
+ for(const field of ['expires_at','data_access_expires_at']){
+  if(!Number.isSafeInteger(data[field])||data[field]<=0)return held('lifetime_unknown');
+  if(data[field]<=nowSeconds)return held('credential_expired');
+ }
+ if(data.data_access_expires_at-nowSeconds<=900)return held('data_access_renewal_required');
+ const remaining=data.expires_at-nowSeconds;
+ if(remaining<=900)return held('insufficient_exchange_window');
+ return{state:remaining<=7*DAY?'exchange_review_ready':'validity_monitoring',reason:null,
+  remainingBand:remaining<=3600?'within_1_hour':remaining<=DAY?'within_24_hours':remaining<=7*DAY?'within_7_days':'beyond_7_days',
+  exchangeReviewReady:remaining<=7*DAY,exchangeAuthorized:false,storageAuthorized:false};
+}
+// Validate a prospective server-side exchange before any storage. The caller
+// must separately authorize duration/storage and freshly recheck Page/IG.
+// No network, credential inputs, mutation transport or CLI entry exists here.
+export function assessMetaTokenReplacement(before,after,nowSeconds){
+ const held=reason=>({state:'held',reason,replacementVerified:false,storageAuthorized:false,registrationAuthorized:false});
+ const initial=assessMetaTokenLifecycle(before,nowSeconds),candidate=assessMetaTokenLifecycle(after,nowSeconds);
+ if(initial.state==='held'||candidate.state==='held')return held('token_metadata_unverified');
+ if(initial.exchangeReviewReady!==true)return held('exchange_not_needed');
+ if(typeof before.user_id!=='string'||!before.user_id||before.user_id!==after.user_id)return held('subject_changed_or_unknown');
+ const oldScopes=normalizedSet(before.scopes),newScopes=normalizedSet(after.scopes);
+ if(JSON.stringify(oldScopes)!==JSON.stringify(newScopes))return held('permission_set_changed');
+ const oldTargets=granularTargets(before.granular_scopes),newTargets=granularTargets(after.granular_scopes);
+ if(oldTargets===null||newTargets===null||oldTargets!==newTargets)return held('asset_scope_changed_or_unknown');
+ if(after.expires_at<=before.expires_at||after.expires_at-nowSeconds<=7*DAY||after.expires_at-nowSeconds>61*DAY)return held('replacement_lifetime_unverified');
+ if(after.data_access_expires_at!==before.data_access_expires_at)return held('data_access_lifetime_changed');
+ if(after.data_access_expires_at-nowSeconds<=7*DAY)return held('data_access_renewal_required');
+ return{state:'replacement_metadata_verified',reason:null,replacementVerified:true,
+  storageAuthorized:false,registrationAuthorized:false};
+}
 function safeDiagnostic(error,data,now){
  const numeric=value=>Number.isSafeInteger(value)&&value>=0&&value<=2147483647?value:null;
  const seconds=Math.floor(now()/1000);
@@ -39,6 +92,7 @@ export async function inspectMetaPair(env,fetchImpl=fetch,now=Date.now){
   return{ok:true,state:'token_app_pair_verified',appMatches:true,tokenValid:true,requiredScopesVerified:true,
    tokenExpiryWithin7Days:data.expires_at>0?data.expires_at-seconds<=604800:null,
    dataAccessExpiryWithin7Days:data.data_access_expires_at>0?data.data_access_expires_at-seconds<=604800:null,
+   lifecycle:assessMetaTokenLifecycle(data,seconds),
    targetAssetRechecked:false,credentialsInstalled:false,registrationAttempted:false,subscriptionAttempted:false,messagesSent:0};
  }catch{return{ok:false,state:'pair_read_failed'};}
 }
