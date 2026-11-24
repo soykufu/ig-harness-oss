@@ -3,6 +3,31 @@
 This is a review plan, not execution permission. No account registration,
 webhook subscription, credential installation, or message dispatch occurs.
 
+## Read-only Meta app inspection entry
+
+The existing `soykufu-smoke.yml` workflow has an explicit, default-off
+`app_webhook_readonly` input. It reads only app `2224712165014101` identity and
+its subscription list, using `IG_META_APP_SECRET` inside the official runner.
+It does not receive the user token, administrator key or Cloudflare token in
+that step. Headers carry the app credential, redirects are rejected, responses
+are bounded, and raw values/errors/callback URLs are never printed. Missing
+secret means hold, not a new authentication attempt or retry.
+
+If needed, the owner saves the **App Secret of Meta app 2224712165014101** in
+the existing repository's Actions secret `IG_META_APP_SECRET`. This is distinct
+from the existing user access token and the 64-hex database backup key. Never
+paste it into chat, a workflow input, command, document or public repository.
+The read-only inspection does not install it into the Worker, authorize such
+installation, generate a verify token, or activate either app/account webhook.
+
+Official endpoint references (reviewed 2026-11-24):
+- https://developers.facebook.com/docs/graph-api/reference/app/subscriptions/
+- https://developers.facebook.com/docs/graph-api/reference/application/
+
+Subscription `fields` may be documented strings or named objects in current
+SDK responses; inspect both. Report active=false/unknown, foreign callbacks,
+duplicate objects and incomplete pagination without merging them into success.
+
 ## Verified starting point
 
 - Production backend accepted once in run 45310176568; mutation entry retired.
