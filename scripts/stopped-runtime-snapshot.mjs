@@ -1,5 +1,6 @@
 import {readTimeTravelProof,isTimeTravelProofPath} from './stopped-time-travel-proof.mjs';
 import {createHash} from 'node:crypto';
+import {inspectConnectionCredentialMetadata} from './stopped-connection-readiness.mjs';
 const account='e76a3f504309ca9289d8dfa3ee504502';
 const database='e55c3b84-ea9a-48fd-a7a3-08253089d295';
 const script='soykufu-ig-harness-20261119';
@@ -21,7 +22,7 @@ function inspect(bindings){
  // Missing optional flags are disabled in the existing application. A secret,
  // duplicate or unexpected value is unverified; never read a secret endpoint.
  const extraFlagsVerified=flags.every(name=>{const rows=named(name);return rows.length===0||rows.length===1&&rows[0].type==='plain_text'&&rows[0].text==='0';});
- return{deployedBindingsVerified,preparationLockVerified,extraFlagsVerified};
+ return{deployedBindingsVerified,preparationLockVerified,extraFlagsVerified,connectionCredentialMetadata:inspectConnectionCredentialMetadata(bindings)};
 }
 /** Read-only official runner metadata. Never return raw bindings or API errors.
  * A bookmark is availability evidence, never a restore-tested backup. */

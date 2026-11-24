@@ -28,7 +28,7 @@ on:
         default: ''
   push:
     branches: [main]
-    paths: ['.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs', 'scripts/stopped-saved-recovery.mjs', 'scripts/stopped-saved-recovery.test.mjs', 'scripts/stopped-once-restore.mjs', 'scripts/stopped-once-restore.test.mjs', 'scripts/stopped-migration-review.mjs', 'scripts/stopped-migration-review.test.mjs', 'scripts/stopped-database-envelope.mjs', 'scripts/stopped-database-envelope.test.mjs', 'scripts/stopped-export-drill.mjs', 'scripts/stopped-export-drill.test.mjs', 'scripts/stopped-backup-preflight.mjs', 'scripts/stopped-backup-preflight.test.mjs', 'scripts/recovery-bucket-guard.mjs', 'scripts/recovery-bucket-guard.test.mjs', 'scripts/stopped-protection-apply.mjs', 'scripts/stopped-protection-apply.test.mjs', 'scripts/stopped-database-copy-once.mjs', 'scripts/stopped-database-copy-once.test.mjs', 'scripts/stopped-database-copy-entry.mjs', 'scripts/stopped-database-copy-entry.test.mjs', 'scripts/stopped-migration-apply.mjs', 'scripts/stopped-migration-apply.test.mjs', 'scripts/stopped-approved-migration-plan.json', 'scripts/stopped-deployment-candidate.mjs', 'scripts/stopped-deployment-candidate.test.mjs', 'scripts/stopped-backend-apply.mjs', 'scripts/stopped-backend-apply.test.mjs']
+    paths: ['.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs', 'scripts/stopped-connection-readiness.mjs', 'scripts/stopped-connection-readiness.test.mjs', 'scripts/stopped-saved-recovery.mjs', 'scripts/stopped-saved-recovery.test.mjs', 'scripts/stopped-once-restore.mjs', 'scripts/stopped-once-restore.test.mjs', 'scripts/stopped-migration-review.mjs', 'scripts/stopped-migration-review.test.mjs', 'scripts/stopped-database-envelope.mjs', 'scripts/stopped-database-envelope.test.mjs', 'scripts/stopped-export-drill.mjs', 'scripts/stopped-export-drill.test.mjs', 'scripts/stopped-backup-preflight.mjs', 'scripts/stopped-backup-preflight.test.mjs', 'scripts/recovery-bucket-guard.mjs', 'scripts/recovery-bucket-guard.test.mjs', 'scripts/stopped-protection-apply.mjs', 'scripts/stopped-protection-apply.test.mjs', 'scripts/stopped-database-copy-once.mjs', 'scripts/stopped-database-copy-once.test.mjs', 'scripts/stopped-database-copy-entry.mjs', 'scripts/stopped-database-copy-entry.test.mjs', 'scripts/stopped-migration-apply.mjs', 'scripts/stopped-migration-apply.test.mjs', 'scripts/stopped-approved-migration-plan.json', 'scripts/stopped-deployment-candidate.mjs', 'scripts/stopped-deployment-candidate.test.mjs', 'scripts/stopped-backend-apply.mjs', 'scripts/stopped-backend-apply.test.mjs']
 permissions:
   contents: read
 concurrency:
@@ -55,6 +55,8 @@ jobs:
         run: node --test scripts/stopped-export-drill.test.mjs scripts/stopped-export-drill-entry.test.mjs
       - name: Test Meta read-only verification boundaries without credentials
         run: node --test scripts/soykufu-meta-readonly.test.mjs
+      - name: Test stopped account planning boundaries without credentials
+        run: node --test scripts/stopped-connection-readiness.test.mjs
       - name: Verify Meta identity and grants only when explicitly requested
         if: github.event_name == 'workflow_dispatch' && inputs.meta_readonly == true && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss'
         env:
@@ -121,3 +123,4 @@ jobs:
         run: node scripts/stopped-deployment-candidate.mjs
       - name: Test scoped backend replacement boundaries offline
         run: node --test scripts/stopped-backend-apply.test.mjs
+

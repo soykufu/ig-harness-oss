@@ -1,5 +1,6 @@
 import {readStoppedRuntimeSnapshot,isStoppedRuntimeReadPath} from './stopped-runtime-snapshot.mjs';
 import {readStoppedInstallationSnapshot,migrationLedgerFingerprint} from './stopped-installation-snapshot.mjs';
+import {assessStoppedConnectionReadiness} from './stopped-connection-readiness.mjs';
 const origin = 'https://soykufu-ig-harness-20261119.soykufu.workers.dev';
 const key = process.env.IG_HARNESS_API_KEY;
 const cfToken = process.env.CLOUDFLARE_API_TOKEN;
@@ -44,6 +45,7 @@ try {
   const finalLedger=await query('SELECT name,sha256 FROM ig_schema_migrations');
   if(migrationLedgerFingerprint(finalLedger)!==snapshot.migrationLedgerSha256)throw new Error('Migration ledger changed during runtime verification');
   console.log('Stopped preparation snapshot (read only): '+JSON.stringify({...snapshot,...runtime}));
+  console.log('Stopped connection readiness (metadata only): '+JSON.stringify(assessStoppedConnectionReadiness({...snapshot,...runtime})));
   console.log(`Verified Japanese login HTML/JavaScript: ${origin}/login/`);
   console.log('Verified unauthenticated API=401, authenticated API=200, database healthy, outbound paused, accounts=0, followers=0.');
   console.log('Read-only smoke check: no message, Meta authentication, deployment or content change.');
@@ -54,3 +56,4 @@ try {
   console.error(allowed.includes(message) ? message : 'Verification could not complete; credentials remain hidden.');
   process.exitCode = 1;
 }
+
