@@ -92,3 +92,24 @@ Read-only readiness intentionally preserves `registrationAuthorized=false`,
 `webhookActivationAuthorized=false`, and `messagesAuthorized=false` even when
 all metadata exists. It does not overwrite prior native-restore or encrypted
 backup evidence and does not grant a broad deployment permission.
+
+## Saved credential pairing (read-only)
+
+After app identity inspection, use the explicit default-off `meta_pair_readonly`
+input in the same workflow. It consumes both saved credentials only in that
+step and calls the fixed Meta `/v25.0/debug_token` once. The documented
+`input_token` query contains the inspected token only on the runner-to-Meta
+request; never log the URL or transport error. The app credential remains in
+the Authorization header. A matching app ID, is_valid=true, the five required
+scopes, and non-expired observed timestamps are checked. Zero/missing expiry
+is unknown lifetime, not permanent validity. Report only reason codes,
+booleans and required missing scope names. No user ID, raw dates, token suffix,
+page data or credential values leave the check. It does not recheck the target
+Page/IG asset and does not install credentials or register an account.
+
+Official reference reviewed 2026-11-24:
+https://developers.facebook.com/docs/graph-api/reference/debug_token/
+
+App Secret saving and app inspection completed in official run45314455517:
+appIdentityVerified=true, listingIncomplete=false, objects=[]; no subscriptions
+were activated. Do not ask for the same App Secret or user token again.

@@ -2,6 +2,10 @@ name: SOY-KUFU verify stopped admin
 on:
   workflow_dispatch:
     inputs:
+      meta_pair_readonly:
+        description: 'Check saved user token belongs to the fixed Meta app only; no registration, setup or sending'
+        type: boolean
+        default: false
       app_webhook_readonly:
         description: 'Inspect the fixed Meta app subscriptions only; no setup, repair, callback request or sending'
         type: boolean
@@ -32,7 +36,7 @@ on:
         default: ''
   push:
     branches: [main]
-    paths: ['.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs', 'scripts/stopped-connection-readiness.mjs', 'scripts/stopped-connection-readiness.test.mjs', 'scripts/soykufu-app-webhook-readonly.mjs', 'scripts/soykufu-app-webhook-readonly.test.mjs', 'scripts/stopped-saved-recovery.mjs', 'scripts/stopped-saved-recovery.test.mjs', 'scripts/stopped-once-restore.mjs', 'scripts/stopped-once-restore.test.mjs', 'scripts/stopped-migration-review.mjs', 'scripts/stopped-migration-review.test.mjs', 'scripts/stopped-database-envelope.mjs', 'scripts/stopped-database-envelope.test.mjs', 'scripts/stopped-export-drill.mjs', 'scripts/stopped-export-drill.test.mjs', 'scripts/stopped-backup-preflight.mjs', 'scripts/stopped-backup-preflight.test.mjs', 'scripts/recovery-bucket-guard.mjs', 'scripts/recovery-bucket-guard.test.mjs', 'scripts/stopped-protection-apply.mjs', 'scripts/stopped-protection-apply.test.mjs', 'scripts/stopped-database-copy-once.mjs', 'scripts/stopped-database-copy-once.test.mjs', 'scripts/stopped-database-copy-entry.mjs', 'scripts/stopped-database-copy-entry.test.mjs', 'scripts/stopped-migration-apply.mjs', 'scripts/stopped-migration-apply.test.mjs', 'scripts/stopped-approved-migration-plan.json', 'scripts/stopped-deployment-candidate.mjs', 'scripts/stopped-deployment-candidate.test.mjs', 'scripts/stopped-backend-apply.mjs', 'scripts/stopped-backend-apply.test.mjs']
+    paths: ['.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs', 'scripts/stopped-connection-readiness.mjs', 'scripts/stopped-connection-readiness.test.mjs', 'scripts/soykufu-app-webhook-readonly.mjs', 'scripts/soykufu-app-webhook-readonly.test.mjs', 'scripts/soykufu-meta-pair-readonly.mjs', 'scripts/soykufu-meta-pair-readonly.test.mjs', 'scripts/stopped-saved-recovery.mjs', 'scripts/stopped-saved-recovery.test.mjs', 'scripts/stopped-once-restore.mjs', 'scripts/stopped-once-restore.test.mjs', 'scripts/stopped-migration-review.mjs', 'scripts/stopped-migration-review.test.mjs', 'scripts/stopped-database-envelope.mjs', 'scripts/stopped-database-envelope.test.mjs', 'scripts/stopped-export-drill.mjs', 'scripts/stopped-export-drill.test.mjs', 'scripts/stopped-backup-preflight.mjs', 'scripts/stopped-backup-preflight.test.mjs', 'scripts/recovery-bucket-guard.mjs', 'scripts/recovery-bucket-guard.test.mjs', 'scripts/stopped-protection-apply.mjs', 'scripts/stopped-protection-apply.test.mjs', 'scripts/stopped-database-copy-once.mjs', 'scripts/stopped-database-copy-once.test.mjs', 'scripts/stopped-database-copy-entry.mjs', 'scripts/stopped-database-copy-entry.test.mjs', 'scripts/stopped-migration-apply.mjs', 'scripts/stopped-migration-apply.test.mjs', 'scripts/stopped-approved-migration-plan.json', 'scripts/stopped-deployment-candidate.mjs', 'scripts/stopped-deployment-candidate.test.mjs', 'scripts/stopped-backend-apply.mjs', 'scripts/stopped-backend-apply.test.mjs']
 permissions:
   contents: read
 concurrency:
@@ -63,6 +67,14 @@ jobs:
         run: node --test scripts/stopped-connection-readiness.test.mjs
       - name: Test app webhook read-only boundaries without credentials
         run: node --test scripts/soykufu-app-webhook-readonly.test.mjs
+      - name: Test Meta token app pairing without credentials
+        run: node --test scripts/soykufu-meta-pair-readonly.test.mjs
+      - name: Check saved Meta credential pairing only when explicitly requested
+        if: github.event_name == 'workflow_dispatch' && inputs.meta_pair_readonly == true && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss'
+        env:
+          IG_META_APP_SECRET: ${{ secrets.IG_META_APP_SECRET }}
+          IG_META_USER_ACCESS_TOKEN: ${{ secrets.IG_META_USER_ACCESS_TOKEN }}
+        run: node scripts/soykufu-meta-pair-readonly.mjs
       - name: Inspect fixed Meta app webhook metadata only when explicitly requested
         if: github.event_name == 'workflow_dispatch' && inputs.app_webhook_readonly == true && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss'
         env:
