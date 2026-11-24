@@ -1,224 +1,88 @@
-// B-08/B-09: inspect and fix the *app-side* webhook subscription
-// (GET/POST https://graph.facebook.com/{version}/{app-id}/subscriptions).
-// The account-side subscribed_apps check lives in account-connection.ts —
-// both sides must be configured before Meta delivers any event.
+// App-side Instagram webhook observation. Configuration of the instagram
+// object belongs to the Meta App Dashboard, not POST /app/subscriptions.
+// Official reference: https://developers.facebook.com/docs/graph-api/reference/app/subscriptions/
 import type { CredentialEnv } from './credential-crypto.js';
 import { readAppSecret } from './credential-crypto.js';
 import { loadTokenDebug } from './token-debug.js';
-
-/** Fields the app-side instagram (or page) object subscription should carry. */
-export const APP_SUBSCRIPTION_FIELDS = [
-  'messages',
-  'messaging_postbacks',
-  'messaging_referral',
-  'comments',
-  'mentions',
-  'live_comments',
-] as const;
-
-const GRAPH_VERSION = 'v25.0';
-
-/** The stored secret may be unreadable (wrong key); fall back to the env secret. */
-async function resolveAppSecret(
-  account: { id: string; ig_user_id: string; app_secret: string | null },
-  env: CredentialEnv & { IG_APP_SECRET?: string },
-): Promise<string | undefined> {
-  try {
-    return (await readAppSecret(account, env)) ?? env.IG_APP_SECRET ?? undefined;
-  } catch {
-    return env.IG_APP_SECRET ?? undefined;
-  }
+export const APP_SUBSCRIPTION_FIELDS = ['messages','messaging_postbacks','messaging_referral','comments','mentions','live_comments'] as const;
+const GRAPH_VERSION='v25.0';
+async function resolveAppSecret(account:{id:string;ig_user_id:string;app_secret:string|null},env:CredentialEnv&{IG_APP_SECRET?:string}):Promise<string|undefined>{
+  try{return(await readAppSecret(account,env))??env.IG_APP_SECRET??undefined;}catch{return env.IG_APP_SECRET??undefined;}
 }
-
-export interface AppSubscriptionObject {
-  object: string;
-  callbackUrl: string | null;
-  fields: string[];
-  active: boolean;
-}
-
+export interface AppSubscriptionObject {object:string;callbackUrl:string|null;fields:string[];active:boolean|null}
 export interface AppWebhookReport {
-  checkedAt: string;
-  status: 'ok' | 'fail' | 'unknown';
-  appId: string | null;
-  callbackUrl: string | null;
-  objects: AppSubscriptionObject[];
-  missingFields: string[];
-  callbackMatches: boolean | null;
-  message?: string | null;
+  checkedAt:string;status:'ok'|'fail'|'unknown';appId:string|null;callbackUrl:string|null;
+  objects:AppSubscriptionObject[];missingFields:string[];callbackMatches:boolean|null;
+  listingIncomplete?:boolean;message?:string|null;
 }
-
-function appAccessToken(appId: string, appSecret: string): string {
-  return `${appId}|${appSecret}`;
+export async function resolveAppId(env:CredentialEnv&{IG_APP_ID?:string;IG_APP_SECRET?:string},db:D1Database,accountId:string):Promise<string|null>{
+  if(env.IG_APP_ID)return env.IG_APP_ID;
+  const debug=await loadTokenDebug(db,accountId);return debug?.status==='ok'?debug.appId??null:null;
 }
-
-/**
- * Resolve the Meta app id: explicit IG_APP_ID env, else the app_id learned
- * from debug_token (B-04). Returns null when neither is available.
- */
-export async function resolveAppId(
-  env: CredentialEnv & { IG_APP_ID?: string; IG_APP_SECRET?: string },
-  db: D1Database,
-  accountId: string,
-): Promise<string | null> {
-  if (env.IG_APP_ID) return env.IG_APP_ID;
-  const debug = await loadTokenDebug(db, accountId);
-  return debug?.status === 'ok' ? debug.appId ?? null : null;
+function normalizeFields(value:unknown):string[]{
+  if(!Array.isArray(value))throw Error('invalid_subscription_fields');
+  const fields=value.map((f:unknown)=>typeof f==='string'?f:f&&typeof f==='object'&&'name'in f?(f as {name:unknown}).name:null);
+  if(fields.some(f=>typeof f!=='string'||!/^[a-z_]{1,64}$/.test(f))||new Set(fields).size!==fields.length)throw Error('invalid_subscription_fields');
+  return fields as string[];
 }
-
-async function fetchSubscriptions(
-  appId: string,
-  appSecret: string,
-): Promise<{ objects: AppSubscriptionObject[]; raw: unknown }> {
-  const url = new URL(`https://graph.facebook.com/${GRAPH_VERSION}/${appId}/subscriptions`);
-  url.searchParams.set('access_token', appAccessToken(appId, appSecret));
-  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-  const payload = (await res.json().catch(() => ({}))) as {
-    data?: Array<{ object?: string; callback_url?: string; fields?: Array<{ name: string }> }>;
-    error?: { code?: number; message?: string };
-  };
-  if (!res.ok || payload.error) {
-    const error = new Error(payload.error?.message ?? `subscriptions read failed (HTTP ${res.status})`);
-    (error as Error & { graphCode?: number }).graphCode = payload.error?.code;
-    throw error;
-  }
-  const objects = (payload.data ?? []).map((row) => ({
-    object: row.object ?? '',
-    callbackUrl: row.callback_url ?? null,
-    fields: (row.fields ?? []).map((f) => f.name),
-    active: true,
-  }));
-  return { objects, raw: payload };
+function callback(value:unknown):string|null{
+  if(typeof value!=='string')return null;
+  try{const u=new URL(value);if(!['https:','http:'].includes(u.protocol)||u.username||u.password||u.search||u.hash)return null;return u.href;}catch{return null;}
 }
-
-/**
- * Read-only app-side subscription check. Unknown (not fail) when the app id
- * or secret is missing, or Meta refuses the read (insufficient app role /
- * token type — 要実機).
- */
+async function fetchSubscriptions(appId:string,secret:string):Promise<{objects:AppSubscriptionObject[];incomplete:boolean}>{
+  if(!/^\d{1,64}$/.test(appId))throw Error('invalid_app_id');
+  const res=await fetch('https://graph.facebook.com/'+GRAPH_VERSION+'/'+appId+'/subscriptions',{
+    method:'GET',redirect:'error',headers:{Authorization:'Bearer '+appId+'|'+secret},signal:AbortSignal.timeout(10000),
+  });
+  if(!res.ok||!res.body)throw Error('subscription_read_failed');
+  const reader=res.body.getReader(),parts:Uint8Array[]=[];let size=0;
+  try{for(;;){const {value,done}=await reader.read();if(done)break;size+=value.byteLength;if(size>65536)throw Error('subscription_response_too_large');parts.push(value);}}finally{await reader.cancel();}
+  const bytes=new Uint8Array(size);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.byteLength;}
+  const payload=JSON.parse(new TextDecoder().decode(bytes)) as {data?:unknown;error?:unknown;paging?:{next?:unknown}};
+  if(!payload||payload.error||!Array.isArray(payload.data))throw Error('subscription_response_invalid');
+  const objects=payload.data.map((item:unknown)=>{
+    if(!item||typeof item!=='object')throw Error('subscription_response_invalid');
+    const r=item as {object?:unknown;callback_url?:unknown;fields?:unknown;active?:unknown};
+    if(typeof r.object!=='string'||!r.object)throw Error('subscription_response_invalid');
+    return {object:r.object,callbackUrl:callback(r.callback_url),fields:normalizeFields(r.fields),active:typeof r.active==='boolean'?r.active:null};
+  });
+  return{objects,incomplete:payload.paging?.next!==undefined&&payload.paging.next!==null&&payload.paging.next!==''};
+}
 export async function checkAppWebhook(
-  env: CredentialEnv & { IG_APP_ID?: string; IG_APP_SECRET?: string; WORKER_URL: string },
-  db: D1Database,
-  account: { id: string; ig_user_id: string; app_secret: string | null },
-): Promise<AppWebhookReport> {
-  const checkedAt = new Date().toISOString();
-  const expectedCallback = `${env.WORKER_URL.replace(/\/$/, '')}/webhook`;
-  const appId = await resolveAppId(env, db, account.id);
-  const appSecret = await resolveAppSecret(account, env);
-  if (!appId || !appSecret) {
-    return {
-      checkedAt, status: 'unknown', appId, callbackUrl: null, objects: [], missingFields: [], callbackMatches: null,
-      message: 'App ID / App Secret が無いため、アプリ側の Webhook 設定を読み取れません。App Secret を登録し（必要なら IG_APP_ID も設定し）、再チェックしてください。',
-    };
-  }
-  try {
-    const { objects } = await fetchSubscriptions(appId, appSecret);
-    // Page-linked Unified login receives comments via the app-level instagram
-    // object subscription; both instagram and page objects are inspected.
-    const relevant = objects.filter((o) => o.object === 'instagram' || o.object === 'page');
-    const fields = new Set(relevant.flatMap((o) => o.fields));
-    const missingFields = APP_SUBSCRIPTION_FIELDS.filter((f) => !fields.has(f));
-    const callbackMatches = relevant.length > 0 && relevant.every((o) => o.callbackUrl === expectedCallback);
-    const status: AppWebhookReport['status'] = relevant.length === 0 || !callbackMatches || missingFields.length > 0 ? 'fail' : 'ok';
-    return {
-      checkedAt,
-      status,
-      appId,
-      callbackUrl: relevant[0]?.callbackUrl ?? null,
-      objects,
-      missingFields,
-      callbackMatches,
-      message: status === 'ok' ? null : [
-        relevant.length === 0 ? 'アプリ側の Webhook 購読がありません' : null,
-        callbackMatches === false ? 'コールバック URL がこの Worker と一致しません' : null,
-        missingFields.length ? `未購読フィールド: ${missingFields.join(', ')}` : null,
-      ].filter(Boolean).join(' / '),
-    };
-  } catch (error) {
-    return {
-      checkedAt, status: 'unknown', appId, callbackUrl: null, objects: [], missingFields: [], callbackMatches: null,
-      message: `アプリ側購読を読み取れませんでした（${error instanceof Error ? error.message : 'unknown error'}）`,
-    };
-  }
+  env:CredentialEnv&{IG_APP_ID?:string;IG_APP_SECRET?:string;WORKER_URL:string},db:D1Database,
+  account:{id:string;ig_user_id:string;app_secret:string|null},
+):Promise<AppWebhookReport>{
+  const checkedAt=new Date().toISOString(),appId=await resolveAppId(env,db,account.id),secret=await resolveAppSecret(account,env);
+  const base={checkedAt,appId,callbackUrl:null,objects:[],missingFields:[],callbackMatches:null};
+  if(!appId||!secret)return{...base,status:'unknown',message:'アプリ情報が未設定のため、Webhook設定を確認できません。'};
+  const expected=callback(env.WORKER_URL.replace(/\/$/,'')+'/webhook');
+  if(!expected)return{...base,status:'unknown',message:'Webhookの受信先URLを確認してください。'};
+  try{
+    const {objects,incomplete}=await fetchSubscriptions(appId,secret);
+    const relevant=objects.filter(o=>o.object==='instagram'||o.object==='page'),instagram=relevant.filter(o=>o.object==='instagram');
+    const duplicates=['instagram','page'].some(type=>relevant.filter(o=>o.object===type).length>1);
+    const fields=instagram.length===1?instagram[0]!.fields:[];
+    const missingFields=APP_SUBSCRIPTION_FIELDS.filter(f=>!fields.includes(f));
+    const callbackMatches=relevant.length>0&&relevant.every(o=>o.callbackUrl===expected);
+    const unknown=incomplete||duplicates||relevant.some(o=>o.active===null);
+    const status=unknown?'unknown':instagram.length!==1||!callbackMatches||relevant.some(o=>o.active!==true)||missingFields.length?'fail':'ok';
+    return{checkedAt,status,appId,callbackUrl:instagram[0]?.callbackUrl??relevant[0]?.callbackUrl??null,objects,missingFields,callbackMatches,listingIncomplete:incomplete,
+      message:status==='ok'?null:unknown?'購読情報が不完全なため、Metaのアプリ管理画面で確認してください。':'Metaのアプリ管理画面でInstagramのWebhook購読・受信先・有効状態を確認してください。'};
+  }catch{return{...base,status:'unknown',message:'アプリ側の購読情報を確認できませんでした。'};}
 }
-
 export interface FixAppWebhookResult {
-  fixed: boolean;
-  refused?: boolean;
-  foreignUrl?: string;
-  verifyTokenGenerated?: boolean;
-  report: AppWebhookReport;
+  fixed:boolean;refused?:boolean;foreignUrl?:string;verifyTokenGenerated?:boolean;manualSetupRequired?:boolean;report:AppWebhookReport;
 }
-
-/**
- * B-09: repair the app-side subscription with an approval. Generates a fresh
- * verify token (saved on the account) so nobody has to keep a copy of the old
- * one. A foreign callback URL is never overwritten — the operator must fix
- * that in the App Dashboard (human_console).
- */
+/** Observe first. Never rotate a verify token or issue an unsupported API write. */
 export async function fixAppWebhook(
-  env: CredentialEnv & { IG_APP_ID?: string; IG_APP_SECRET?: string; WORKER_URL: string },
-  db: D1Database,
-  account: { id: string; ig_user_id: string; app_secret: string | null },
-  opts: { updateAccountVerifyToken: (verifyToken: string) => Promise<void> },
-): Promise<FixAppWebhookResult> {
-  const expectedCallback = `${env.WORKER_URL.replace(/\/$/, '')}/webhook`;
-  const appId = await resolveAppId(env, db, account.id);
-  const appSecret = await resolveAppSecret(account, env);
-  const reportBefore = await checkAppWebhook(env, db, account);
-  if (!appId || !appSecret) {
-    return { fixed: false, report: reportBefore };
-  }
-  if (reportBefore.status === 'unknown') {
-    return { fixed: false, report: reportBefore };
-  }
-  let foreignUrl: string | null = null;
-  for (const o of reportBefore.objects) {
-    if ((o.object === 'instagram' || o.object === 'page') && o.callbackUrl && o.callbackUrl !== expectedCallback) {
-      foreignUrl = o.callbackUrl;
-      break;
-    }
-  }
-  if (foreignUrl) {
-    return { fixed: false, refused: true, foreignUrl, report: reportBefore };
-  }
-
-  const verifyToken = generateVerifyToken();
-  await opts.updateAccountVerifyToken(verifyToken);
-
-  const objects = new Set(reportBefore.objects.filter((o) => o.object === 'instagram' || o.object === 'page').map((o) => o.object));
-  if (!objects.size) objects.add('instagram');
-  let lastError: unknown;
-  for (const object of objects) {
-    const existing = reportBefore.objects.filter((o) => o.object === object).flatMap((o) => o.fields);
-    const fields = [...new Set([...APP_SUBSCRIPTION_FIELDS, ...existing])];
-    const url = new URL(`https://graph.facebook.com/${GRAPH_VERSION}/${appId}/subscriptions`);
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ access_token: appAccessToken(appId, appSecret), object, callback_url: expectedCallback, verify_token: verifyToken, fields: fields.join(',') }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    const payload = (await res.json().catch(() => ({}))) as { success?: boolean; error?: { message?: string } };
-    if (!res.ok || payload.error) lastError = new Error(payload.error?.message ?? `subscription write failed (HTTP ${res.status})`);
-  }
-  if (lastError) {
-    return {
-      fixed: false,
-      report: { ...reportBefore, status: 'unknown', message: `アプリ側購読の設定に失敗しました: ${lastError instanceof Error ? lastError.message : 'unknown error'}` },
-    };
-  }
-  const report = await checkAppWebhook(env, db, account);
-  await db.prepare(
-    `INSERT INTO integration_settings (key, value) VALUES (?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-       updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now'))`,
-  ).bind(`health:app_webhook:${account.id}`, JSON.stringify(report)).run().catch(() => {});
-  return { fixed: true, verifyTokenGenerated: true, report };
-}
-
-function generateVerifyToken(): string {
-  const bytes = new Uint8Array(24);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+  env:CredentialEnv&{IG_APP_ID?:string;IG_APP_SECRET?:string;WORKER_URL:string},db:D1Database,
+  account:{id:string;ig_user_id:string;app_secret:string|null},
+  _opts:{updateAccountVerifyToken:(verifyToken:string)=>Promise<void>},
+):Promise<FixAppWebhookResult>{
+  const report=await checkAppWebhook(env,db,account),expected=callback(env.WORKER_URL.replace(/\/$/,'')+'/webhook');
+  if(report.status==='unknown')return{fixed:false,verifyTokenGenerated:false,manualSetupRequired:true,report};
+  const foreign=report.objects.find(o=>(o.object==='instagram'||o.object==='page')&&o.callbackUrl&&o.callbackUrl!==expected);
+  if(foreign)return{fixed:false,refused:true,foreignUrl:foreign.callbackUrl!,verifyTokenGenerated:false,manualSetupRequired:true,report};
+  if(report.status==='ok')return{fixed:true,verifyTokenGenerated:false,report};
+  return{fixed:false,refused:true,verifyTokenGenerated:false,manualSetupRequired:true,report};
 }

@@ -182,8 +182,9 @@ webhook.post('/webhook', async (c) => {
     if (events.some(({ kind, value }) => (kind !== 'messaging' && kind !== 'standby') || !('message' in value) || !value.message?.is_echo)) processing.push(account);
   }
   if (accepted.length) c.executionCtx.waitUntil(recordSignatureSuccess(db, accepted.map((a) => a.id)).catch(() => {}));
-  if (processing.length && c.env.TENANT_SCHEDULER) await armScheduler(c.env);
+  if (processing.length && c.env.TENANT_SCHEDULER && c.env.OUTBOUND_PREPARATION_LOCK !== '1') await armScheduler(c.env);
   c.executionCtx.waitUntil((async () => {
+    if (c.env.OUTBOUND_PREPARATION_LOCK === '1') return;
     for (const account of processing) {
       const activity = await beginActivity(db);
       if (!activity) continue;
@@ -200,6 +201,9 @@ webhook.post('/webhook', async (c) => {
 });
 
 export async function processQueuedWebhooks(db: D1Database, client: InstagramClient, account: IgAccount, workerUrl?: string, env?: AccountEnv): Promise<void> {
+  // A preparation lock holds durable events as well as Graph mutations.
+  // Do not drain, create followers or consume reply eligibility while locked.
+  if (env?.OUTBOUND_PREPARATION_LOCK === '1') return;
   // Operator stop switch: leave events pending, they resume after unpausing.
   if (await isOutboundPaused(db)) return;
   if(env?.RECRUITMENT_LEDGER_ENFORCEMENT==='1'&&!isRecruitmentDeliveryWindow())return;
