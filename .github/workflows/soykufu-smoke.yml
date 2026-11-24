@@ -2,6 +2,10 @@ name: SOY-KUFU verify stopped admin
 on:
   workflow_dispatch:
     inputs:
+      receiving_backend_once:
+        description: 'Apply the approved stopped receiving backend once; preserve settings, data, assets and all sending stops'
+        type: boolean
+        default: false
       receiving_preflight:
         description: 'Read registered account and app receiving prerequisites only; never configure, subscribe or send'
         type: boolean
@@ -40,7 +44,7 @@ on:
         default: ''
   push:
     branches: [main]
-    paths: ['scripts/stopped-receiving-preflight.mjs', 'scripts/stopped-receiving-preflight.test.mjs', 'scripts/stopped-registered-account.test.mjs', 'scripts/stopped-installation-snapshot.mjs', 'scripts/stopped-account-preparation-apply.mjs', 'scripts/stopped-account-preparation-apply.test.mjs', 'scripts/stopped-account-registration-once.mjs', 'scripts/stopped-account-registration-once.test.mjs', '.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs', 'scripts/stopped-connection-readiness.mjs', 'scripts/stopped-connection-readiness.test.mjs', 'scripts/soykufu-app-webhook-readonly.mjs', 'scripts/soykufu-app-webhook-readonly.test.mjs', 'scripts/soykufu-meta-pair-readonly.mjs', 'scripts/soykufu-meta-pair-readonly.test.mjs', 'scripts/stopped-saved-recovery.mjs', 'scripts/stopped-saved-recovery.test.mjs', 'scripts/stopped-once-restore.mjs', 'scripts/stopped-once-restore.test.mjs', 'scripts/stopped-migration-review.mjs', 'scripts/stopped-migration-review.test.mjs', 'scripts/stopped-database-envelope.mjs', 'scripts/stopped-database-envelope.test.mjs', 'scripts/stopped-export-drill.mjs', 'scripts/stopped-export-drill.test.mjs', 'scripts/stopped-backup-preflight.mjs', 'scripts/stopped-backup-preflight.test.mjs', 'scripts/recovery-bucket-guard.mjs', 'scripts/recovery-bucket-guard.test.mjs', 'scripts/stopped-protection-apply.mjs', 'scripts/stopped-protection-apply.test.mjs', 'scripts/stopped-database-copy-once.mjs', 'scripts/stopped-database-copy-once.test.mjs', 'scripts/stopped-database-copy-entry.mjs', 'scripts/stopped-database-copy-entry.test.mjs', 'scripts/stopped-migration-apply.mjs', 'scripts/stopped-migration-apply.test.mjs', 'scripts/stopped-approved-migration-plan.json', 'scripts/stopped-deployment-candidate.mjs', 'scripts/stopped-deployment-candidate.test.mjs', 'scripts/stopped-backend-apply.mjs', 'scripts/stopped-backend-apply.test.mjs']
+    paths: ['scripts/stopped-receiving-backend-once.mjs', 'scripts/stopped-receiving-backend-once.test.mjs', 'scripts/stopped-receiving-preflight.mjs', 'scripts/stopped-receiving-preflight.test.mjs', 'scripts/stopped-registered-account.test.mjs', 'scripts/stopped-installation-snapshot.mjs', 'scripts/stopped-account-preparation-apply.mjs', 'scripts/stopped-account-preparation-apply.test.mjs', 'scripts/stopped-account-registration-once.mjs', 'scripts/stopped-account-registration-once.test.mjs', '.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs', 'scripts/stopped-connection-readiness.mjs', 'scripts/stopped-connection-readiness.test.mjs', 'scripts/soykufu-app-webhook-readonly.mjs', 'scripts/soykufu-app-webhook-readonly.test.mjs', 'scripts/soykufu-meta-pair-readonly.mjs', 'scripts/soykufu-meta-pair-readonly.test.mjs', 'scripts/stopped-saved-recovery.mjs', 'scripts/stopped-saved-recovery.test.mjs', 'scripts/stopped-once-restore.mjs', 'scripts/stopped-once-restore.test.mjs', 'scripts/stopped-migration-review.mjs', 'scripts/stopped-migration-review.test.mjs', 'scripts/stopped-database-envelope.mjs', 'scripts/stopped-database-envelope.test.mjs', 'scripts/stopped-export-drill.mjs', 'scripts/stopped-export-drill.test.mjs', 'scripts/stopped-backup-preflight.mjs', 'scripts/stopped-backup-preflight.test.mjs', 'scripts/recovery-bucket-guard.mjs', 'scripts/recovery-bucket-guard.test.mjs', 'scripts/stopped-protection-apply.mjs', 'scripts/stopped-protection-apply.test.mjs', 'scripts/stopped-database-copy-once.mjs', 'scripts/stopped-database-copy-once.test.mjs', 'scripts/stopped-database-copy-entry.mjs', 'scripts/stopped-database-copy-entry.test.mjs', 'scripts/stopped-migration-apply.mjs', 'scripts/stopped-migration-apply.test.mjs', 'scripts/stopped-approved-migration-plan.json', 'scripts/stopped-deployment-candidate.mjs', 'scripts/stopped-deployment-candidate.test.mjs', 'scripts/stopped-backend-apply.mjs', 'scripts/stopped-backend-apply.test.mjs']
 permissions:
   contents: read
 concurrency:
@@ -137,14 +141,14 @@ jobs:
       - name: Test stopped candidate boundaries offline
         run: node --test scripts/stopped-deployment-candidate.test.mjs
       - uses: pnpm/action-setup@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
+        if: github.event_name == 'workflow_dispatch' && (inputs.deployment_candidate == true || inputs.receiving_backend_once == true)
         with:
           version: 9.15.4
       - name: Install candidate build dependencies
-        if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
+        if: github.event_name == 'workflow_dispatch' && (inputs.deployment_candidate == true || inputs.receiving_backend_once == true)
         run: pnpm install --frozen-lockfile
       - name: Build candidate dependencies
-        if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
+        if: github.event_name == 'workflow_dispatch' && (inputs.deployment_candidate == true || inputs.receiving_backend_once == true)
         run: pnpm --filter @ig-harness/shared --filter @ig-harness/ig-sdk build
       - name: Read settings and build deployment candidate without mutation
         if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
@@ -163,3 +167,13 @@ jobs:
           IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}
           IG_META_APP_SECRET: ${{ secrets.IG_META_APP_SECRET }}
         run: node scripts/stopped-receiving-preflight.mjs
+
+      - name: Test approved stopped receiving backend boundaries
+        run: node --test scripts/stopped-receiving-backend-once.test.mjs
+      - name: Apply approved receiving backend once with sending stopped
+        if: github.event_name == 'workflow_dispatch' && inputs.receiving_backend_once == true && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}
+          APPROVED_RECEIVING_BACKEND: '1'
+        run: node scripts/stopped-receiving-backend-once.mjs
