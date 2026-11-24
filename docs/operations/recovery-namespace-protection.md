@@ -1,7 +1,20 @@
 # Recovery namespace protection candidate
 
-Status: offline candidate only. No deployment command or permission is supplied
-by these files. The approved one-time encrypted DB copy remains unconsumed.
+Status: protection applied and accepted in official run 45303824595, followed
+by the approved encrypted DB copy in run 45304780947. Both one-time approvals
+are consumed. Current CLI/workflow write entrypoints are retired.
+
+Original module and existing settings/DB were preserved. Private GET/HEAD/Range/
+encoded paths and gallery checks passed; normal media and Range passed; test
+objects were removed. New deployment fingerprint:
+`f7e412a0dbb7360d2cf7db15c74908a039472c14bc34217cb06ce1cb2d4e9112`.
+
+The encrypted copy was read back, authenticated/decrypted and restored into an
+isolated SQLite DB with all 37 tables and complete row contents matched. This
+is not a production D1 restore, migration, connection or sending authorization.
+
+The candidate and preconditions below document the executed scope; they are not
+a fresh permission to repeat it.
 
 ## Observed baseline
 

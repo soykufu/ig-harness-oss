@@ -14,23 +14,33 @@ async function shape(query){
  const counts=[];for(const row of schema.filter(x=>x.type==='table')){if(typeof row.name!=='string')throw Error('Invalid table');const n=(await query('SELECT COUNT(*) AS n FROM '+JSON.stringify(row.name)))[0]?.n;if(!Number.isSafeInteger(n)||n<0)throw Error('Invalid count');if(row.name!=='rate_limit_buckets')counts.push([row.name,n]);}
  return {schemaHash:digest(schema),businessCountsHash:digest(counts)};
 }
+// A separately reviewed content-only protection receipt can connect native
+// recovery evidence to a newer serving version. Original native fields stay
+// unchanged; actual schema/count/ledger comparisons still run on both sides.
+function protectionLink(evidence,transition){
+ if(transition===undefined)return null;
+ const r=transition?.receipt;
+ if(!Number.isSafeInteger(transition?.runId)||transition.runId<=0||transition.fromFingerprint!==evidence.fingerprint||!r||r.ok!==true||r.state!=='protection_applied_and_canary_verified'||r.replacementAccepted!==true||r.privacyVerified!==true||r.originalModulePreserved!==true||r.settingsPreserved!==true||r.installationPreserved!==true||r.migrationsApplied!==0||r.messagesSent!==0||!HASH.test(r.deploymentFingerprint)||r.deploymentFingerprint===evidence.fingerprint||!/^[a-f0-9-]{36}$/.test(r.originalVersionId||'')||!['ok','privateGet404','privateHead404','range404','encoded404','galleryHidden','ordinaryMediaVerified','cleanupVerified'].every(k=>r.canary?.[k]===true))throw Error('Protection transition requires reconciliation');
+ return{kind:'reviewed_content_only_protection_v1',runId:transition.runId,fromFingerprint:transition.fromFingerprint,toFingerprint:r.deploymentFingerprint,originalVersionId:r.originalVersionId};
+}
 // Supplied receipts are reviewed evidence, not self-authenticating grants.
 // This produces a candidate plan only: it never executes or authorizes SQL.
-export async function reviewStoppedMigration({repoDir,query,readRuntime,evidence,now=Date.now()}){
+export async function reviewStoppedMigration({repoDir,query,readRuntime,evidence,protectionTransition,now=Date.now()}){
  try{
   if(!evidence||evidence.accountId!==ACCOUNT||evidence.databaseId!==DATABASE||evidence.restoreAccepted!==true||evidence.postRestoreVerified!==true||!Number.isSafeInteger(evidence.restoreRunId)||evidence.restoreRunId<=0||!Number.isSafeInteger(evidence.auditRunId)||evidence.auditRunId<=0)return held('native_receipt_missing');
   if(!Number.isSafeInteger(now)||!Number.isFinite(Date.parse(evidence.verifiedAt))||!Number.isFinite(Date.parse(evidence.expiresAt))||Date.parse(evidence.verifiedAt)>now||Date.parse(evidence.expiresAt)<=now||Date.parse(evidence.expiresAt)-Date.parse(evidence.verifiedAt)>7*86400000)return held('native_receipt_expired_or_invalid');
   for(const k of ['schemaHash','businessCountsHash','ledgerHash','fingerprint'])if(typeof evidence[k]!=='string'||!HASH.test(evidence[k]))return held('native_receipt_invalid');
   const read=sql=>{if(!/^\s*(SELECT|PRAGMA)\b/i.test(sql)||sql.includes(';'))throw Error('Read only');return query(sql);};
+  const transition=protectionLink(evidence,protectionTransition),expectedFingerprint=transition?.toFingerprint??evidence.fingerprint;
   const before=await readStoppedInstallationSnapshot({repoDir,query:read}),runtime=await readRuntime(),data=await shape(read);
   if(before.stopped!==true||before.connectedAccounts!==0||before.followers!==0||runtime.deploymentStable!==true||runtime.deployedBindingsVerified!==true||runtime.preparationLockVerified!==true||runtime.extraFlagsVerified!==true)return held('installation_changed');
-  if(data.schemaHash!==evidence.schemaHash||data.businessCountsHash!==evidence.businessCountsHash||before.migrationLedgerSha256!==evidence.ledgerHash||runtime.deploymentFingerprint!==evidence.fingerprint)return held('recovery_scope_changed');
+  if(data.schemaHash!==evidence.schemaHash||data.businessCountsHash!==evidence.businessCountsHash||before.migrationLedgerSha256!==evidence.ledgerHash||runtime.deploymentFingerprint!==expectedFingerprint)return held('recovery_scope_changed');
   const inv=before.migrationInventory;
   if(before.appliedMigrationCount!==27||inv.expected!==41||inv.matching!==27||inv.missing.length!==14||inv.modified.length||inv.unexpected.length||inv.duplicates.length||inv.missing.some((n,i)=>Number(n.slice(0,4))!==28+i))return held('migration_inventory_changed');
   const migrations=[];for(const name of inv.missing){const sql=await readFile(join(repoDir,'packages/db/migrations',name),'utf8');migrations.push({name,sha256:createHash('sha256').update(sql).digest('hex')});}
   const after=await readStoppedInstallationSnapshot({repoDir,query:read}),afterRuntime=await readRuntime(),afterData=await shape(read);
   if(JSON.stringify(before)!==JSON.stringify(after)||JSON.stringify(data)!==JSON.stringify(afterData)||afterRuntime.deploymentStable!==true||afterRuntime.deployedBindingsVerified!==true||afterRuntime.preparationLockVerified!==true||afterRuntime.extraFlagsVerified!==true||afterRuntime.deploymentFingerprint!==runtime.deploymentFingerprint)return held('review_changed_in_flight');
-  const plan={kind:'stopped_migration_review_v1',accountId:ACCOUNT,databaseId:DATABASE,recoveryReceipt:{restoreRunId:evidence.restoreRunId,auditRunId:evidence.auditRunId,expiresAt:evidence.expiresAt},baseline:{...data,ledgerHash:before.migrationLedgerSha256,fingerprint:runtime.deploymentFingerprint},migrations};
+  const plan={kind:'stopped_migration_review_v1',accountId:ACCOUNT,databaseId:DATABASE,recoveryReceipt:{restoreRunId:evidence.restoreRunId,auditRunId:evidence.auditRunId,expiresAt:evidence.expiresAt},baseline:{...data,ledgerHash:before.migrationLedgerSha256,fingerprint:runtime.deploymentFingerprint},...(transition?{protectionTransition:transition}:{}),migrations};
   return {ok:true,state:'migration_candidate_ready_for_review',planId:digest(plan),plan,nativeEvidenceMatched:true,applyAuthorized:false,backupVerified:false,deploymentAuthorized:false,messagesSent:0};
  }catch{return held('read_or_validation_failed');}
 }
@@ -57,7 +67,7 @@ async function main(){
   const b=await r.json();if(!r.ok||b.success!==true)throw Error('Read failed');return b.result;
  };
  const input=JSON.parse(process.env.NATIVE_RECOVERY_EVIDENCE||'null');
- const options={repoDir:process.cwd(),query:async sql=>(await api(DB+'/query',sql))[0]?.results,readRuntime:()=>readStoppedRuntimeSnapshot({read:path=>api(path)}),evidence:input?.saved?input.evidence:input};
+ const options={repoDir:process.cwd(),query:async sql=>(await api(DB+'/query',sql))[0]?.results,readRuntime:()=>readStoppedRuntimeSnapshot({read:path=>api(path)}),evidence:input?.evidence??input,protectionTransition:input?.protectionTransition};
  return input?.saved?revalidateStoppedMigrationPlan({...options,saved:input.saved}):reviewStoppedMigration(options);
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){let r;try{r=await main();}catch{r=held('review_failed');}console.log(JSON.stringify(r));if(!r.ok)process.exitCode=1;}

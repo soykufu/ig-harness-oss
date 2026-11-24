@@ -1,9 +1,5 @@
 import {createHash} from 'node:crypto';
-import {readFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
-import {summarizeWorkerBundle} from './stopped-backup-preflight.mjs';
-import {readStoppedRuntimeSnapshot,isStoppedRuntimeReadPath} from './stopped-runtime-snapshot.mjs';
-import {readStoppedInstallationSnapshot} from './stopped-installation-snapshot.mjs';
 const ACCOUNT='e76a3f504309ca9289d8dfa3ee504502',DATABASE='e55c3b84-ea9a-48fd-a7a3-08253089d295',SCRIPT='soykufu-ig-harness-20261119';
 const ROOT='/accounts/'+ACCOUNT,WORKER=ROOT+'/workers/scripts/'+SCRIPT,DB=ROOT+'/d1/database/'+DATABASE;
 const FINGERPRINT='483673d06f50743aae1b8e966d00e1bedc1f192472ea577efd234eb9d0ef2de1';
@@ -38,65 +34,5 @@ export async function performProtection({mode,official,snapshot,replace,verify,c
   return{...receipt,ok:true,state:'protection_applied_and_canary_verified',privacyVerified:true};
  }catch(e){return{...receipt,reason:['baseline_changed','baseline_changed_in_flight','official_runtime_required','replacement_result_unknown','post_deployment_verification_failed','canary_not_accepted'].includes(e?.message)?e.message:'protection_validation_failed'};}
 }
-async function main(){
- const token=process.env.CLOUDFLARE_API_TOKEN,key=process.env.IG_HARNESS_API_KEY,mode=process.env.PROTECTION_ACTION;
- const official=process.env.GITHUB_REPOSITORY==='soykufu/ig-harness-oss'&&process.env.GITHUB_REF==='refs/heads/main'&&process.env.GITHUB_EVENT_NAME==='workflow_dispatch'&&!!token&&!!key;
- if(!official)return performProtection({mode,official:false});
- const request=async(path,{method='GET',body,headers={}}={})=>fetch('https://api.cloudflare.com/client/v4'+path,{method,body,redirect:'error',headers:{Authorization:`Bearer ${token}`,...headers},signal:AbortSignal.timeout(25000)});
- const json=async(path,options)=>{const r=await request(path,options),b=await r.json();if(!r.ok||b.success!==true)throw Error('provider_failed');return b.result;};
- const runtime=()=>readStoppedRuntimeSnapshot({read:path=>{if(!isStoppedRuntimeReadPath(path))throw Error('read_path');return json(path);}});
- const query=async sql=>{if(!/^\s*(SELECT|PRAGMA)\b/i.test(sql)||sql.includes(';'))throw Error('sql_read_only');const b=await json(DB+'/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sql})});if(!Array.isArray(b[0]?.results))throw Error('sql_read_failed');return b[0].results;};
- let original;
- const bundle=async()=>{const r=await request(WORKER+'/content/v2');if(!r.ok)throw Error('code_read_failed');const bytes=Buffer.from(await r.arrayBuffer());const summary=await summarizeWorkerBundle(bytes,r.headers.get('content-type'),r.headers.get('cf-entrypoint'));if(summary.entrypoint==='index.js'&&summary.modules.length===1){const form=await new Response(bytes,{headers:{'Content-Type':r.headers.get('content-type')}}).formData();const file=form.get('index.js');if(!file||typeof file==='string')throw Error('source_unavailable');original=Buffer.from(await file.arrayBuffer());}return summary;};
- const installation=async()=>{
-  const state=await readStoppedInstallationSnapshot({repoDir:process.cwd(),query});
-  const schema=await query("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND substr(name,1,4)!='_cf_' ORDER BY type,name");
-  const counts=[];for(const row of schema.filter(x=>x.type==='table'&&x.name!=='rate_limit_buckets')){if(typeof row.name!=='string')throw Error('bad_table');counts.push([row.name,(await query('SELECT COUNT(*) AS n FROM '+JSON.stringify(row.name)))[0]?.n]);}
-  return {...state,schemaHash:digest(JSON.stringify(schema)),businessCountsHash:digest(JSON.stringify(counts))};
- };
- const settings=()=>json(WORKER+'/settings');
- const snapshot=async()=>{const r=await runtime();const i=await installation();const b=await bundle();const s=await settings();const dep=await json(WORKER+'/deployments');const version=await json(WORKER+'/versions/'+dep.deployments[0].versions[0].version_id);const last=await runtime();if(canonical(r)!==canonical(last))throw Error('runtime_moved');return{runtime:r,installation:i,bundle:b,settings:s,versionId:version.id,versionResourceFields:Object.keys(version.resources||{}).sort()};};
- const guard=await readFile(new URL('./recovery-bucket-guard.mjs',import.meta.url),'utf8');
- // Verify object-read permission and fixed canary absence before any deployment.
- for(const name of ['__private_recovery__/protection-canary-20261124.txt','protection-canary-20261124.txt']){const r=await request(ROOT+'/r2/buckets/'+SCRIPT+'/objects/'+name);if(r.status!==404)throw Error('canary_preflight_unavailable');}
- return performProtection({mode,official,snapshot,replace:async()=>{
-  const modules=protectionModules(original,guard),form=new FormData();form.set('metadata',JSON.stringify({main_module:'backup-guard.js'}));for(const m of modules)form.set(m.name,new Blob([m.data],{type:'application/javascript+module'}),m.name);
-  // Content-only endpoint preserves existing config and metadata. No script upload,
-  // binding replacement, trigger update or deployment API is exposed here.
-  const r=await request(WORKER+'/content',{method:'PUT',body:form});const b=await r.json();return r.ok&&b.success===true;
- },verify:async before=>{
-  const after=await snapshot();const expected=protectionModules(original,guard).map(m=>({name:m.name,type:'application/javascript+module',sha256:digest(m.data)})).sort((a,b)=>a.name.localeCompare(b.name,'en'));
-  const ok=canonical(before.settings)===canonical(after.settings)&&canonical(before.installation)===canonical(after.installation)&&after.bundle.entrypoint==='backup-guard.js'&&canonical(after.bundle.modules)===canonical(expected)&&after.runtime.deploymentStable&&after.runtime.deployedBindingsVerified&&after.runtime.preparationLockVerified&&after.runtime.extraFlagsVerified&&after.runtime.r2DirectPublicAccessDisabled;
-  return{ok,fingerprint:after.runtime.deploymentFingerprint};
- },canary:()=>runCanary({request,key})});
-}
-async function runCanary({request,key}){
- const body=Buffer.from('SOY-KUFU non-sensitive protection acceptance 2026-11-24'),names=['__private_recovery__/protection-canary-20261124.txt','protection-canary-20261124.txt'],owned=[];
- const path=name=>ROOT+'/r2/buckets/'+SCRIPT+'/objects/'+name;
- const receipt={ok:false,privateGet404:false,privateHead404:false,range404:false,encoded404:false,galleryHidden:false,ordinaryMediaVerified:false,cleanupVerified:false};
- const read=async name=>{const r=await request(path(name));if(r.status===404)return null;if(!r.ok)throw Error('object_read_failed');return Buffer.from(await r.arrayBuffer());};
- const worker=(suffix,options={})=>fetch(ORIGIN+suffix,{...options,redirect:'error',signal:AbortSignal.timeout(15000)});
- try{
-  for(const name of names)if(await read(name)!==null)throw Error('canary_exists');
-  for(const name of names){owned.push(name);const r=await request(path(name),{method:'PUT',headers:{'Content-Type':'application/octet-stream'},body});const b=await r.json();if(!r.ok||b.success!==true)throw Error('canary_put_unknown');if(!(await read(name))?.equals(body))throw Error('canary_readback_failed');}
-  const suffix='/images/'+names[0],encoded='/images/'+encodeURIComponent(names[0]);
-  receipt.privateGet404=(await worker(suffix)).status===404;
-  receipt.privateHead404=(await worker(suffix,{method:'HEAD'})).status===404;
-  receipt.range404=(await worker(encoded,{headers:{Range:'bytes=0-7'}})).status===404;
-  receipt.encoded404=(await worker(encoded)).status===404&&(await worker('/images/'+encodeURIComponent(encodeURIComponent(names[0])))).status===404;
-  const normal=await worker('/images/'+names[1]);const range=await worker('/images/'+names[1],{headers:{Range:'bytes=0-7'}});receipt.ordinaryMediaVerified=normal.ok&&Buffer.from(await normal.arrayBuffer()).equals(body)&&range.status===206&&Buffer.from(await range.arrayBuffer()).equals(body.subarray(0,8));
-  let cursor;let hidden=true,seenNormal=false,complete=false;
-  for(let page=0;page<20;page++){
-   const r=await worker('/api/images?limit=200'+(cursor?'&cursor='+encodeURIComponent(cursor):''),{headers:{Authorization:`Bearer ${key}`}});const b=await r.json();if(!r.ok||b.success!==true||!Array.isArray(b.data?.items))throw Error('gallery_failed');
-   if(b.data.items.some(x=>x.key===names[0]||x.key?.startsWith('__private_recovery__/')))hidden=false;
-   if(b.data.items.some(x=>x.key===names[1]))seenNormal=true;
-   if(!b.data.truncated){complete=true;break;}if(!b.data.cursor||b.data.cursor===cursor)throw Error('gallery_cursor_failed');cursor=b.data.cursor;
-  }
-  receipt.galleryHidden=hidden&&seenNormal&&complete;
- }catch{/* No retry, raw error, object data or credentials in receipt. */}
- finally{
-  let cleaned=true;for(const name of owned){try{const current=await read(name);if(current===null)continue;if(!current.equals(body)){cleaned=false;continue;}const r=await request(path(name),{method:'DELETE'});if(!r.ok||await read(name)!==null)cleaned=false;}catch{cleaned=false;}}receipt.cleanupVerified=cleaned&&owned.length===2;
- }
- receipt.ok=Object.entries(receipt).filter(([k])=>k!=='ok').every(([,v])=>v===true);return receipt;
-}
+async function main(){return{ok:false,state:'protection_execution_retired',consumedRunId:45303824595,replacementAttempted:false};}
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){let r;try{r=await main();}catch{r={ok:false,state:'protection_held',reason:'preparation_read_failed',replacementAttempted:false};}console.log(JSON.stringify(r));if(!r.ok)process.exitCode=1;}
