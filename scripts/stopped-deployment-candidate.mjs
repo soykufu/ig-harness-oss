@@ -1,7 +1,21 @@
 import {readFile,readdir,mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';import {join,resolve,relative} from 'node:path';import {spawnSync} from 'node:child_process';import {createHash} from 'node:crypto';import {pathToFileURL} from 'node:url';
 import {readStoppedRuntimeSnapshot,isStoppedRuntimeReadPath} from './stopped-runtime-snapshot.mjs';import {readStoppedInstallationSnapshot} from './stopped-installation-snapshot.mjs';
-const A='e76a3f504309ca9289d8dfa3ee504502',D='e55c3b84-ea9a-48fd-a7a3-08253089d295',NAME='soykufu-ig-harness-20261119',W='/accounts/'+A+'/workers/scripts/'+NAME,FP='f7e412a0dbb7360d2cf7db15c74908a039472c14bc34217cb06ce1cb2d4e9112';
+const A='e76a3f504309ca9289d8dfa3ee504502',D='e55c3b84-ea9a-48fd-a7a3-08253089d295',NAME='soykufu-ig-harness-20261119',W='/accounts/'+A+'/workers/scripts/'+NAME;
+// Accepted backend run45310176568 and independent read-only run45320614983.
+// A later deployment must be reconciled explicitly, never learned automatically.
+export const CANDIDATE_BASELINE_FINGERPRINT='693814e3519ac1d1521ab0fb40288043d18952cf32cbee232d784fa5f72ac145';
+const FP=CANDIDATE_BASELINE_FINGERPRINT;
+export function candidateBaselineReady(runtime,installation){
+ const m=installation?.migrationInventory;
+ return runtime?.deploymentStable===true&&runtime?.deployedBindingsVerified===true
+  &&runtime?.preparationLockVerified===true&&runtime?.extraFlagsVerified===true
+  &&runtime?.deploymentFingerprint===FP&&installation?.stopped===true
+  &&installation?.connectedAccounts===0&&installation?.followers===0
+  &&installation?.appliedMigrationCount===41&&installation?.schemaReady===true
+  &&m?.expected===41&&m?.applied===41&&m?.matching===41
+  &&['missing','modified','unexpected','duplicates'].every(k=>Array.isArray(m[k])&&m[k].length===0);
+}
 const hash=b=>createHash('sha256').update(b).digest('hex');
 export function candidateConfig(settings,repo){
  if(!/^\d{4}-\d{2}-\d{2}$/.test(settings?.compatibility_date||'')||!Array.isArray(settings.bindings))throw Error('settings_invalid');
@@ -14,7 +28,7 @@ async function inventory(dir){const rows=[];async function walk(p){for(const d o
 async function main(){let temp;try{
  const e=process.env;if(e.GITHUB_REPOSITORY!=='soykufu/ig-harness-oss'||e.GITHUB_REF!=='refs/heads/main'||e.GITHUB_EVENT_NAME!=='workflow_dispatch'||!e.CLOUDFLARE_API_TOKEN)throw Error('official_runner_required');
  const api=async(path,sql)=>{if(sql===undefined){if(!isStoppedRuntimeReadPath(path)&&path!==W+'/settings')throw Error('read_path');}else if(path!=='/accounts/'+A+'/d1/database/'+D+'/query'||!/^\s*(SELECT|PRAGMA)\b/i.test(sql)||sql.includes(';'))throw Error('read_only');const r=await fetch('https://api.cloudflare.com/client/v4'+path,{method:sql===undefined?'GET':'POST',redirect:'error',headers:{Authorization:`Bearer ${e.CLOUDFLARE_API_TOKEN}`,'Content-Type':'application/json'},...(sql===undefined?{}:{body:JSON.stringify({sql})}),signal:AbortSignal.timeout(20000)});const b=await r.json();if(!r.ok||b.success!==true)throw Error('provider_read_failed');return b.result;};
- const snapshot=async()=>{const runtime=await readStoppedRuntimeSnapshot({read:path=>api(path)}),installation=await readStoppedInstallationSnapshot({repoDir:process.cwd(),query:async sql=>(await api('/accounts/'+A+'/d1/database/'+D+'/query',sql))[0].results});if(!runtime.deploymentStable||!runtime.deployedBindingsVerified||!runtime.preparationLockVerified||!runtime.extraFlagsVerified||runtime.deploymentFingerprint!==FP||!installation.stopped||installation.appliedMigrationCount!==41||!installation.schemaReady)throw Error('baseline_changed');return{runtime,installation};};
+ const snapshot=async()=>{const runtime=await readStoppedRuntimeSnapshot({read:path=>api(path)}),installation=await readStoppedInstallationSnapshot({repoDir:process.cwd(),query:async sql=>(await api('/accounts/'+A+'/d1/database/'+D+'/query',sql))[0].results});if(!candidateBaselineReady(runtime,installation))throw Error('baseline_changed');return{runtime,installation};};
  const before=await snapshot(),settings=await api(W+'/settings'),config=candidateConfig(settings,process.cwd());temp=await mkdtemp(join(tmpdir(),'soykufu-candidate-'));const path=join(temp,'wrangler.json');await writeFile(path,JSON.stringify(config),{mode:0o600});
  const run=(args,cwd)=>{const r=spawnSync('pnpm',args,{cwd,env:buildEnvironment(e),encoding:'utf8',timeout:300000,maxBuffer:32*1024*1024});if(r.error||r.status!==0)throw Error('offline_build_failed');};
  run(['--filter','web','build'],process.cwd());
