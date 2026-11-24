@@ -24,35 +24,5 @@ export async function businessSnapshot(query){
   const rows=await query(`SELECT ${fields.join(',')} FROM ${name} LIMIT 10001`);if(rows.length>10000)throw Error('row_limit');const values=rows.map(r=>JSON.stringify(cols.map((_,i)=>[r['t'+i],r['v'+i]]))).sort();if(Buffer.byteLength(JSON.stringify(values))>16*1024*1024)throw Error('size_limit');data.push([t.name,cols.map(c=>c.name),values]);
  }return{schema:hash(JSON.stringify(schema)),data:hash(JSON.stringify(data)),businessTables:data.length};
 }
-export async function main(){
- const e=process.env,r={ok:false,state:'migration_apply_held',applyAttempted:false,applyAccepted:false,migrationsApplied:0,messagesSent:0,deploymentAuthorized:false};let local,key,opened;
- try{
-  if(e.GITHUB_REPOSITORY!=='soykufu/ig-harness-oss'||e.GITHUB_REF!=='refs/heads/main'||e.GITHUB_EVENT_NAME!=='workflow_dispatch'||e.GITHUB_RUN_NUMBER!=='44'||e.GITHUB_RUN_ATTEMPT!=='1'||e.APPLY_STOPPED_MIGRATIONS!=='true')throw Error('one_dispatch_required');
-  if(!e.CLOUDFLARE_API_TOKEN||!/^([a-fA-F0-9]{64})$/.test(e.IG_DATABASE_BACKUP_KEY||''))throw Error('credentials_missing');key=Buffer.from(e.IG_DATABASE_BACKUP_KEY,'hex');
-  const request=(path,body)=>fetch('https://api.cloudflare.com/client/v4'+path,{method:body===undefined?'GET':'POST',redirect:'error',headers:{Authorization:`Bearer ${e.CLOUDFLARE_API_TOKEN}`,...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(25000)});
-  const api=async(path,body)=>{const response=await request(path,body),b=await response.json();if(!response.ok||b.success!==true||Array.isArray(b.result)&&b.result.some(x=>x.success===false))throw Error('provider_result_unverified');return b.result;};
-  const query=async sql=>{if(!/^\s*(SELECT|PRAGMA)\b/i.test(sql)||sql.includes(';'))throw Error('read_only');return(await api(DB+'/query',{sql}))[0].results;};
-  const runtime=async()=>{const x=await readStoppedRuntimeSnapshot({read:path=>{if(!isStoppedRuntimeReadPath(path))throw Error('read_path');return api(path);}});if(!x.deploymentStable||!x.deployedBindingsVerified||!x.preparationLockVerified||!x.extraFlagsVerified||!x.r2DirectPublicAccessDisabled||x.deploymentFingerprint!==FP)throw Error('runtime_changed');return x;};
-  const stopped=async()=>{const x=(await query("SELECT (SELECT value FROM integration_settings WHERE key='outbound_paused') AS paused,(SELECT COUNT(*) FROM ig_accounts) AS accounts,(SELECT COUNT(*) FROM followers) AS followers"))[0];if(x?.paused!=='1'||x.accounts!==0||x.followers!==0)throw Error('stop_changed');};
-  await runtime();await stopped();
-  const review=JSON.parse(await readFile(new URL('./stopped-approved-migration-plan.json',import.meta.url),'utf8'));const at=new Date().toISOString(),batch=await prepareBatch({review,repoDir:process.cwd(),at});
-  const response=await request(ROOT+'/r2/buckets/'+B+'/objects/__private_recovery__/database-copy-20261124-once.json');if(!response.ok)throw Error('backup_missing');const raw=await response.arrayBuffer();if(raw.byteLength>64*1024*1024)throw Error('backup_oversize');
-  const expected={accountId:A,databaseId:D,bucketName:B,sourceSha:'d4c3edb788388324bbfba3ddd0e6d3454c1dbc9e',createdAt:'2026-11-24T01:24:26.478Z',expiresAt:'2026-11-30T01:24:26.478Z',schemaHash:'5f2f633b8f4e722a07c1514cab845db3e82944610feca8502f1b5d74519d1dda',ledgerHash:'1f434b319a3d61d77dc1fa81a61399281f4afbbb60fe36085782b02fb510bcad',migrationPlanId:'3352210b62a1c9b9060bd0ddabb1e85d8b5525f8321f0031c194a83bd716dc97'};
-  opened=openDatabaseCopy({envelope:JSON.parse(Buffer.from(raw).toString('utf8')),encryptionKey:key,expected});
-  local=new DatabaseSync(':memory:',{allowExtension:false});local.exec(opened.sql.toString('utf8'));local.exec('PRAGMA foreign_keys=ON');const localQuery=async sql=>local.prepare(sql).all();
-  const before=await businessSnapshot(query);if(JSON.stringify(before)!==JSON.stringify(await businessSnapshot(localQuery)))throw Error('backup_business_drift');
-  if((await query('SELECT COUNT(*) AS n FROM ig_schema_migrations'))[0]?.n!==27)throw Error('ledger_changed');
-  local.exec('BEGIN');try{for(const x of batch)local.exec(x.sql);local.exec('COMMIT');}catch{local.exec('ROLLBACK');throw Error('local_migration_failed');}
-  await verifyLatestSchema(localQuery);const target=await businessSnapshot(localQuery);
-  await runtime();await stopped();if(JSON.stringify(before)!==JSON.stringify(await businessSnapshot(query)))throw Error('pre_apply_drift');
-  r.applyAttempted=true;
-  // One REST batch. No bootstrap, staff-key hashing, restore or retry is exposed.
-  const results=await api(DB+'/query',{batch});if(!Array.isArray(results)||results.length!==batch.length)throw Error('batch_result_unknown');r.applyAccepted=true;
-  if((await query('SELECT COUNT(*) AS n FROM ig_schema_migrations'))[0]?.n!==41)throw Error('ledger_postcheck_failed');
-  if(JSON.stringify(target)!==JSON.stringify(await businessSnapshot(query)))throw Error('postcheck_changed');
-  await verifyLatestSchema(query);const checks=await query('PRAGMA quick_check');if(checks.length!==1||Object.values(checks[0])[0]!=='ok'||(await query('PRAGMA foreign_key_check')).length)throw Error('integrity_failed');
-  await stopped();await runtime();
-  return{...r,ok:true,state:'stopped_migrations_verified',migrationsApplied:14,ledgerCount:41,sourceDataPreserved:true,backupAuthenticated:true,businessRowsMatched:true,volatileRateTableExcluded:true,planId:PLAN,deploymentFingerprint:FP};
- }catch{return r;}finally{local?.close();key?.fill(0);opened?.sql?.fill(0);}
-}
+export async function main(){return{ok:false,state:'migration_apply_retired',consumedRunId:45306989204,applyAttempted:false,migrationsApplied:0};}
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){console.log(JSON.stringify(await main()));}
