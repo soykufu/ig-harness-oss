@@ -2,10 +2,6 @@ name: SOY-KUFU verify stopped admin
 on:
   workflow_dispatch:
     inputs:
-      apply_stopped_backend:
-        description: 'Approved backend content only, dispatch 51 first attempt; retain assets and secrets'
-        type: boolean
-        default: false
       deployment_candidate:
         description: 'Read current settings and build stopped candidate offline; never deploy or change secrets'
         type: boolean
@@ -50,7 +46,7 @@ jobs:
         with:
           node-version: '24'
       - name: Read stopped schema and deployed runtime metadata without changes
-        if: github.event_name != 'workflow_dispatch' || (inputs.restore_plan == '' && inputs.native_migration_review == '' && inputs.backup_preflight != true && inputs.apply_stopped_backend != true)
+        if: github.event_name != 'workflow_dispatch' || (inputs.restore_plan == '' && inputs.native_migration_review == '' && inputs.backup_preflight != true)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}
@@ -109,14 +105,14 @@ jobs:
       - name: Test stopped candidate boundaries offline
         run: node --test scripts/stopped-deployment-candidate.test.mjs
       - uses: pnpm/action-setup@v4
-        if: github.event_name == 'workflow_dispatch' && (inputs.deployment_candidate == true || inputs.apply_stopped_backend == true)
+        if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
         with:
           version: 9.15.4
       - name: Install candidate build dependencies
-        if: github.event_name == 'workflow_dispatch' && (inputs.deployment_candidate == true || inputs.apply_stopped_backend == true)
+        if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
         run: pnpm install --frozen-lockfile
       - name: Build candidate dependencies
-        if: github.event_name == 'workflow_dispatch' && (inputs.deployment_candidate == true || inputs.apply_stopped_backend == true)
+        if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
         run: pnpm --filter @ig-harness/shared --filter @ig-harness/ig-sdk build
       - name: Read settings and build deployment candidate without mutation
         if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
@@ -125,10 +121,3 @@ jobs:
         run: node scripts/stopped-deployment-candidate.mjs
       - name: Test scoped backend replacement boundaries offline
         run: node --test scripts/stopped-backend-apply.test.mjs
-      - name: Apply approved backend content once
-        if: github.event_name == 'workflow_dispatch' && inputs.apply_stopped_backend == true
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}
-          APPLY_STOPPED_BACKEND: 'true'
-        run: node scripts/stopped-backend-apply.mjs
