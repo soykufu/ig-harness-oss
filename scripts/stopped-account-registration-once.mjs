@@ -39,7 +39,7 @@ async function json(response,limit=65536){
  const body=JSON.parse(Buffer.concat(parts).toString('utf8'));if(!body||typeof body!=='object'||body.error)throw Error('provider_response_failed');return body;
 }
 export async function main(e=process.env){
- const official=e.GITHUB_REPOSITORY==='soykufu/ig-harness-oss'&&e.GITHUB_REF==='refs/heads/main'&&e.GITHUB_EVENT_NAME==='workflow_dispatch'&&e.GITHUB_RUN_NUMBER==='67'&&e.GITHUB_RUN_ATTEMPT==='1'&&e.APPROVED_CONNECTION_PHASE==='registration'
+ const official=e.GITHUB_REPOSITORY==='soykufu/ig-harness-oss'&&e.GITHUB_REF==='refs/heads/main'&&e.GITHUB_EVENT_NAME==='workflow_dispatch'&&e.GITHUB_RUN_NUMBER==='69'&&e.GITHUB_RUN_ATTEMPT==='1'&&e.APPROVED_CONNECTION_PHASE==='registration'
   &&format(e.IG_META_USER_ACCESS_TOKEN)&&/^[a-f0-9]{32}$/i.test(e.IG_META_APP_SECRET??'')&&!!e.CLOUDFLARE_API_TOKEN&&!!e.IG_HARNESS_API_KEY;
  const request=(url,options={})=>fetch(url,{...options,redirect:'error',signal:AbortSignal.timeout(25000)});
  const api=async(path,sql)=>{
