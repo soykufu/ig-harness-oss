@@ -5,8 +5,8 @@ on:
       protection_action:
         description: 'Approved existing-Worker namespace protection only: inspect or apply once; never migrate or send'
         type: choice
-        options: [off, inspect, apply]
-        default: off
+        options: ['none', 'inspect', 'apply']
+        default: 'none'
       backup_preflight:
         description: 'Read deployed backup namespace evidence and key presence only; no export or object writes'
         type: boolean
@@ -47,7 +47,7 @@ jobs:
         with:
           node-version: '24'
       - name: Read stopped schema and deployed runtime metadata without changes
-        if: github.event_name != 'workflow_dispatch' || (inputs.restore_plan == '' && inputs.native_migration_review == '' && inputs.backup_preflight != true && (inputs.protection_action == 'off' || inputs.protection_action == ''))
+        if: github.event_name != 'workflow_dispatch' || (inputs.restore_plan == '' && inputs.native_migration_review == '' && inputs.backup_preflight != true && (inputs.protection_action == 'none' || inputs.protection_action == ''))
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}

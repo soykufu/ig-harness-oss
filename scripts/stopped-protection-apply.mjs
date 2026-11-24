@@ -24,7 +24,8 @@ export async function performProtection({mode,official,snapshot,replace,verify,c
  try{
   if(!official||!['inspect','apply'].includes(mode))throw Error('official_runtime_required');
   const before=await snapshot();assertProtectionBaseline(before);
-  if(mode==='inspect')return{...receipt,ok:true,state:'protection_baseline_observed',baseline:{fingerprint:before.runtime.deploymentFingerprint,entrypoint:before.bundle.entrypoint,originalSha256:ORIGINAL,settingsFields:Object.keys(before.settings).sort(),versionResourceFields:before.versionResourceFields,settingsReadable:true,stopped:true}};
+  if(mode==='inspect')return{...receipt,ok:true,state:'protection_baseline_observed',baseline:{fingerprint:before.runtime.deploymentFingerprint,entrypoint:before.bundle.entrypoint,originalSha256:ORIGINAL,settingsFields:Object.keys(before.settings).sort(),versionResourceFields:before.versionResourceFields,settingsReadable:true,stopped:true,originalVersionId:before.versionId}};
+  receipt.originalVersionId=before.versionId;
   const second=await snapshot();assertProtectionBaseline(second);
   if(canonical(before)!==canonical(second))throw Error('baseline_changed_in_flight');
   receipt.replacementAttempted=true;
@@ -54,7 +55,7 @@ async function main(){
   return {...state,schemaHash:digest(JSON.stringify(schema)),businessCountsHash:digest(JSON.stringify(counts))};
  };
  const settings=()=>json(WORKER+'/settings');
- const snapshot=async()=>{const r=await runtime();const i=await installation();const b=await bundle();const s=await settings();const dep=await json(WORKER+'/deployments');const version=await json(WORKER+'/versions/'+dep.deployments[0].versions[0].version_id);const last=await runtime();if(canonical(r)!==canonical(last))throw Error('runtime_moved');return{runtime:r,installation:i,bundle:b,settings:s,versionResourceFields:Object.keys(version.resources||{}).sort()};};
+ const snapshot=async()=>{const r=await runtime();const i=await installation();const b=await bundle();const s=await settings();const dep=await json(WORKER+'/deployments');const version=await json(WORKER+'/versions/'+dep.deployments[0].versions[0].version_id);const last=await runtime();if(canonical(r)!==canonical(last))throw Error('runtime_moved');return{runtime:r,installation:i,bundle:b,settings:s,versionId:version.id,versionResourceFields:Object.keys(version.resources||{}).sort()};};
  const guard=await readFile(new URL('./recovery-bucket-guard.mjs',import.meta.url),'utf8');
  // Verify object-read permission and fixed canary absence before any deployment.
  for(const name of ['__private_recovery__/protection-canary-20261124.txt','protection-canary-20261124.txt']){const r=await request(ROOT+'/r2/buckets/'+SCRIPT+'/objects/'+name);if(r.status!==404)throw Error('canary_preflight_unavailable');}
@@ -83,7 +84,7 @@ async function runCanary({request,key}){
   receipt.privateHead404=(await worker(suffix,{method:'HEAD'})).status===404;
   receipt.range404=(await worker(encoded,{headers:{Range:'bytes=0-7'}})).status===404;
   receipt.encoded404=(await worker(encoded)).status===404&&(await worker('/images/'+encodeURIComponent(encodeURIComponent(names[0])))).status===404;
-  const normal=await worker('/images/'+names[1]);receipt.ordinaryMediaVerified=normal.ok&&Buffer.from(await normal.arrayBuffer()).equals(body);
+  const normal=await worker('/images/'+names[1]);const range=await worker('/images/'+names[1],{headers:{Range:'bytes=0-7'}});receipt.ordinaryMediaVerified=normal.ok&&Buffer.from(await normal.arrayBuffer()).equals(body)&&range.status===206&&Buffer.from(await range.arrayBuffer()).equals(body.subarray(0,8));
   let cursor;let hidden=true,seenNormal=false,complete=false;
   for(let page=0;page<20;page++){
    const r=await worker('/api/images?limit=200'+(cursor?'&cursor='+encodeURIComponent(cursor):''),{headers:{Authorization:`Bearer ${key}`}});const b=await r.json();if(!r.ok||b.success!==true||!Array.isArray(b.data?.items))throw Error('gallery_failed');
