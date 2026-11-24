@@ -127,6 +127,36 @@ const ENV = {
 };
 
 describe('ensureDefaultAccount', () => {
+  it('does not seed an env account or adopt legacy rows while preparation is locked', async () => {
+    const db = createMockDb({ tokenStateTableMissing: true });
+    await ensureDefaultAccount({ ...ENV, OUTBOUND_PREPARATION_LOCK: '1' }, db);
+    expect(db.accounts).toHaveLength(0);
+    expect(db.inserted).toHaveLength(0);
+    expect(db.backfilled).toHaveLength(0);
+    expect(db.settings.account_backfill_done).toBeUndefined();
+  });
+
+  it('does not backfill a manually registered account during locked review', async () => {
+    const account = makeAccount({ is_default: 0 });
+    const db = createMockDb({ accounts: [account] });
+    await ensureDefaultAccount({ ...ENV, OUTBOUND_PREPARATION_LOCK: '1' }, db);
+    expect(db.accounts).toEqual([account]);
+    expect(db.backfilled).toHaveLength(0);
+    expect(db.settings.account_backfill_done).toBeUndefined();
+  });
+
+  it('preserves an incomplete legacy backfill flag while preparation is locked', async () => {
+    const db = createMockDb({ accounts: [makeAccount()], settings: { account_backfill_done: '0', other: 'keep' } });
+    await ensureDefaultAccount({ ...ENV, OUTBOUND_PREPARATION_LOCK: '1' }, db);
+    expect(db.settings).toEqual({ account_backfill_done: '0', other: 'keep' });
+    expect(db.backfilled).toHaveLength(0);
+  });
+
+  it('makes no DB request from lazy setup while preparation is locked', async () => {
+    const db = { prepare() { throw new Error('locked lazy setup touched the DB'); } } as unknown as D1Database;
+    await expect(ensureDefaultAccount({ ...ENV, OUTBOUND_PREPARATION_LOCK: '1' }, db)).resolves.toBeUndefined();
+  });
+
   it('seeds the default account from env and backfills every legacy table', async () => {
     const db = createMockDb({ tokenStateTableMissing: true });
     await ensureDefaultAccount(ENV, db);

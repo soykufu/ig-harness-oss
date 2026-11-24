@@ -61,6 +61,13 @@ duplicate objects and incomplete pagination without merging them into success.
 
 ## Registration side effects to account for before execution
 
+Source preparation now guards `ensureDefaultAccount` at entry while
+`OUTBOUND_PREPARATION_LOCK=1`. Lazy account reads cannot seed environment
+credentials, backfill legacy NULL ownership, or stamp account_backfill_done
+while this lock remains. This source change is not a production deployment;
+verify its accepted backend artifact before registration. Releasing the lock
+would restore normal legacy behavior, so reconcile ownership before release.
+
 Read `apps/worker/src/routes/accounts.ts`, `lib/validate-ig-account.ts`, and
 `lib/account-connection.ts` at the exact reviewed commit before preparing an
 executor. The POST validates the token, discovers the linked Page token, saves

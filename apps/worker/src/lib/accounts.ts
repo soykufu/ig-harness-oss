@@ -100,6 +100,10 @@ async function backfillLegacyRows(db: D1Database, accountId: string): Promise<vo
  * re-reads the winner's row and both backfill with the same id.
  */
 export async function ensureDefaultAccount(env: AccountEnv, db: D1Database): Promise<void> {
+  // Account reads must not seed credentials or adopt legacy NULL rows during
+  // stopped preparation. Explicit registration has its own owner endpoint;
+  // legacy ownership is reconciled separately before releasing this lock.
+  if (env.OUTBOUND_PREPARATION_LOCK === '1') return;
   const existing = await db.prepare('SELECT id FROM ig_accounts LIMIT 1').first<{ id: string }>();
   if (existing) {
     // Seed already happened — but verify the legacy backfill completed.
