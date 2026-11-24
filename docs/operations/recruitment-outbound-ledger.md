@@ -1,4 +1,15 @@
-## 最新の実証と保留（2026-11-21 20:10:59 JST）
+## 現在の実証と残件（2026-11-24）
+
+- 指定D1は41件migration適用/hash一致済み（実適用45306989204、独立再照合45310545013）。旧27件/14件不足は下記履歴時点の情報。
+- Native実復元は#20消費済み/#22 read-only audit合格。暗号DBcopyは45304780947で指定R2へ保存・復号/隔離復元/37表全行一致済み。既存copyは27件時点の保全物、現在41件版の新backupではない。再export/再復元は行わない。
+- backend本体は45310176568で限定反映・実受入済み。既存UI/assets/settings/Secrets/DBを保持し、使用済実行入口を撤去。配信fingerprintは693814e3519ac1d1521ab0fb40288043d18952cf32cbee232d784fa5f72ac145。全Check45310545009成功。
+- 追加の接続事前検査45311898973はread-only成功。tokenEncryptionKeyPresent=true、appSecretPresent=false、verifyTokenPresent=false、appIdConfigured=false、environmentAccountAbsent=true。これは配信先bindingの観測でありGitHub Secret全体の不存在やMeta本人認証未了とは扱わない。
+- 送信停止1/準備lock1/追加flags無効・account0/followers0。Meta本人認証/token保存/5grantsは完了済み。登録・購読/実受信・LINE正式受渡し/旧04ID照合・実来店計測は未完。
+- 登録POSTのsubscribeWebhooksは省略時true。限定登録の準備ではfalseを明記。docs/soykufu-stopped-connection-plan.md参照。今回の読取成功は登録/受信/送信の実行許可ではない。
+
+以下は当時の実装・検証の履歴。『未適用』『復元未試験』等は各日付時点の状態で、現在の待ち理由に再利用しない。
+
+### 履歴：2026-11-21 20:10:59 JSTの実読取
 
 正規読取smoke44897860714成功。DB停止1/IG接続0/求職者0、移行27hash一致・ソース41に対し0028〜0041の14件不足（改変/将来/重複0）。配信中同一単一版の指定D1/R2 binding、準備lock1、追加3flags無効を確認。Time Travel固定時刻参照を2回取得し指紋一致。正規runnerで暗号往復はfalse、永続保存/復元未試験、Worker経由private性未検証のためbackupVerified=false、deploymentAuthorized=false。ソース修正/CI成功と本番適用・実機受信・実見学/採用率改善を区別する。
 
@@ -360,3 +371,4 @@ The existing `getGateAnalytics` linkage query now requires the follower and gate
 The server review itself now holds future, negative, unrepresentable or missing claim timestamps and malformed/normalized-impossible UTC text. The same boundary covers gate receipts, legacy follow-up metadata, public replies and pending markers. Reservation/observation/echo timestamps must be integer, ordered and no later than the read's observation time before they contribute acknowledgement/echo evidence. A future echo does not erase a valid API record; it stays unknown echo evidence. The public reply's acknowledged private phase receives the same time check. Tests first reproduced false completion in the real stopped/locked API, then verify the corrected read-only response without changing any receipt, hold, source data or query-count budget.
 
 The read-only recovery proof also distinguishes not_attempted, key_not_eligible, envelope_check_failed, round_trip_mismatch and verified without revealing a credential or its length. A false envelope check alone must not be described as a missing API key. This is classification of the existing envelope's conditions inside the official runner, not a new key requirement, key regeneration, fallback credential or permission change. API authentication and recovery-envelope eligibility remain separate; no API-key re-entry is requested.
+
