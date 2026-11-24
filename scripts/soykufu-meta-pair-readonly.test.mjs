@@ -12,5 +12,19 @@ test('one official GET checks the pair; query/errors/identity never returned',as
 for(const patch of [{GITHUB_REPOSITORY:'other/repo'},{GITHUB_REF:'refs/heads/dev'},{GITHUB_EVENT_NAME:'push'},{GITHUB_EVENT_NAME:'pull_request'},{IG_META_APP_SECRET:''},{IG_META_USER_ACCESS_TOKEN:''},{IG_META_USER_ACCESS_TOKEN:' '+token},{IG_META_USER_ACCESS_TOKEN:'a\nb'},{IG_META_APP_SECRET:'bad'}])test(`reject before network ${Object.keys(patch)}`,async()=>{let calls=0;assert.equal((await inspectMetaPair({...env,...patch},async()=>{calls++;},()=>time)).ok,false);assert.equal(calls,0);});
 for(const [patch,state]of [[{app_id:'other'},'token_app_mismatch'],[{is_valid:false},'token_not_valid'],[{is_valid:'true'},'token_not_valid'],[{expires_at:time/1000},'token_expired'],[{data_access_expires_at:time/1000-1},'token_expired'],[{expires_at:-1},'token_expiry_unverified'],[{expires_at:'0'},'token_expiry_unverified'],[{scopes:undefined},'token_scopes_unverified'],[{scopes:PAIR_SCOPES.slice(1)},'token_scopes_missing'],[{scopes:[...PAIR_SCOPES,PAIR_SCOPES[0]]},'token_scopes_missing']])test(`hold ${state} ${Object.keys(patch)}`,async()=>assert.equal((await inspectMetaPair(env,response({...data(),...patch}),()=>time)).state,state));
 test('unknown or zero expiry is not unlimited-lifetime proof',async()=>{const r=await inspectMetaPair(env,response({...data(),expires_at:0,data_access_expires_at:undefined}),()=>time);assert.equal(r.ok,true);assert.equal(r.tokenExpiryWithin7Days,null);assert.equal(r.dataAccessExpiryWithin7Days,null);});
+test('nested invalid-token response preserves only safe reason codes and expiry evidence',async()=>{
+ const r=await inspectMetaPair(env,response({...data(),is_valid:false,expires_at:time/1000-1,error:{code:190,subcode:463,message:secret+token}}),()=>time);
+ assert.deepEqual(r,{ok:false,state:'token_not_valid',graphCode:190,graphSubcode:463,appMatches:true,tokenValid:false,expiryElapsed:true});assert.ok(!JSON.stringify(r).includes(secret));
+});
+test('nested error cannot report a guessed app identity or expiry',async()=>{
+ const r=await inspectMetaPair(env,response({is_valid:false,error:{code:190,error_subcode:467,message:token}}),()=>time);
+ assert.equal(r.appMatches,null);assert.equal(r.expiryElapsed,null);assert.equal(r.graphSubcode,467);
+});
+test('non-numeric error codes never echo transport content',async()=>{
+ const r=await inspectMetaPair(env,response({error:{code:token,subcode:secret,message:secret}}),()=>time);assert.equal(r.graphCode,null);assert.equal(r.graphSubcode,null);assert.ok(!JSON.stringify(r).includes(secret));
+});
+test('top-level API errors expose numeric diagnostics only',async()=>{
+ const r=await inspectMetaPair(env,async()=>new Response(JSON.stringify({error:{code:190,error_subcode:463,message:token+secret}})),()=>time);assert.equal(r.graphCode,190);assert.equal(r.graphSubcode,463);assert.equal(r.appMatches,null);assert.ok(!JSON.stringify(r).includes(token));
+});
 test('HTTP failure does not inspect raw body or retry',async()=>{let calls=0;const r=await inspectMetaPair(env,async()=>{calls++;return{ok:false,get body(){throw Error(secret);}};});assert.equal(r.state,'pair_read_failed');assert.equal(calls,1);});
 for(const mode of ['throw','invalid-json','api-error','oversize'])test(`no raw disclosure ${mode}`,async()=>{let calls=0;const r=await inspectMetaPair(env,async(url)=>{calls++;if(mode==='throw')throw Error(url+secret);if(mode==='invalid-json')return new Response(token);if(mode==='api-error')return new Response(JSON.stringify({error:{message:token+secret}}));return new Response('x'.repeat(65537));},()=>time);assert.equal(r.ok,false);assert.equal(calls,1);assert.ok(!JSON.stringify(r).includes(secret));assert.ok(!JSON.stringify(r).includes(token));});

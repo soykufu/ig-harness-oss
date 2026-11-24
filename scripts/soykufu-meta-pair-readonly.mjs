@@ -1,6 +1,14 @@
 import {pathToFileURL} from 'node:url';
 const APP_ID='2224712165014101';
 export const PAIR_SCOPES=Object.freeze(['business_management','instagram_basic','instagram_manage_messages','pages_read_engagement','pages_show_list']);
+function safeDiagnostic(error,data,now){
+ const numeric=value=>Number.isSafeInteger(value)&&value>=0&&value<=2147483647?value:null;
+ const seconds=Math.floor(now()/1000);
+ return{graphCode:numeric(error?.code),graphSubcode:numeric(error?.error_subcode??error?.subcode),
+  appMatches:typeof data?.app_id==='string'&&/^\d+$/.test(data.app_id)?data.app_id===APP_ID:null,
+  tokenValid:typeof data?.is_valid==='boolean'?data.is_valid:null,
+  expiryElapsed:Number.isSafeInteger(data?.expires_at)&&data.expires_at>0&&Number.isFinite(seconds)?data.expires_at<=seconds:null};
+}
 // The documented input_token query stays exclusively inside the official
 // runner -> Meta request. Never return its URL, either key, user id or errors.
 export async function inspectMetaPair(env,fetchImpl=fetch,now=Date.now){
@@ -11,11 +19,13 @@ export async function inspectMetaPair(env,fetchImpl=fetch,now=Date.now){
  try{
   const url=new URL('https://graph.facebook.com/v25.0/debug_token');url.searchParams.set('input_token',token);
   const response=await fetchImpl(url.href,{method:'GET',redirect:'error',headers:{Authorization:`Bearer ${APP_ID}|${secret}`},signal:AbortSignal.timeout(15000)});
-  if(!response.ok||!response.body)return{ok:false,state:'pair_read_failed'};
+  if(!response.ok||!response.body)return{ok:false,state:'pair_read_failed',httpStatus:response.status};
   const reader=response.body.getReader(),chunks=[];let size=0;
   for(;;){const {value,done}=await reader.read();if(done)break;size+=value.byteLength;if(size>65536){await reader.cancel();return{ok:false,state:'pair_response_too_large'};}chunks.push(value);}
   const payload=JSON.parse(Buffer.concat(chunks).toString('utf8')),data=payload?.data;
-  if(payload?.error||!data||typeof data!=='object'||data.error)return{ok:false,state:'pair_response_unverified'};
+  if(payload?.error)return{ok:false,state:'pair_response_unverified',...safeDiagnostic(payload.error,null,now)};
+  if(!data||typeof data!=='object')return{ok:false,state:'pair_response_unverified'};
+  if(data.error)return{ok:false,state:data.is_valid===false?'token_not_valid':'pair_response_unverified',...safeDiagnostic(data.error,data,now)};
   if(data.app_id!==APP_ID)return{ok:false,state:'token_app_mismatch'};
   if(data.is_valid!==true)return{ok:false,state:'token_not_valid'};
   const seconds=Math.floor(now()/1000);if(!Number.isFinite(seconds))return{ok:false,state:'inspection_time_invalid'};
