@@ -2,8 +2,8 @@ name: SOY-KUFU verify stopped admin
 on:
   workflow_dispatch:
     inputs:
-      receiving_secret_once:
-        description: 'Save only the approved existing Meta App Secret encrypted for the fixed account once; no token rotation, verification token or subscription'
+      receiving_app_id_once:
+        description: 'Add the approved fixed public Meta app ID once; inherit all existing bindings without changing secrets or subscriptions'
         type: boolean
         default: false
       receiving_preflight:
@@ -44,7 +44,7 @@ on:
         default: ''
   push:
     branches: [main]
-    paths: ['scripts/stopped-receiving-secret-once.mjs', 'scripts/stopped-receiving-secret-once.test.mjs', 'scripts/stopped-receiving-backend-audit.mjs', 'scripts/stopped-receiving-backend-audit.test.mjs', 'scripts/stopped-receiving-backend-once.mjs', 'scripts/stopped-receiving-backend-once.test.mjs', 'scripts/stopped-receiving-preflight.mjs', 'scripts/stopped-receiving-preflight.test.mjs', 'scripts/stopped-registered-account.test.mjs', 'scripts/stopped-installation-snapshot.mjs', 'scripts/stopped-account-preparation-apply.mjs', 'scripts/stopped-account-preparation-apply.test.mjs', 'scripts/stopped-account-registration-once.mjs', 'scripts/stopped-account-registration-once.test.mjs', '.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs', 'scripts/stopped-connection-readiness.mjs', 'scripts/stopped-connection-readiness.test.mjs', 'scripts/soykufu-app-webhook-readonly.mjs', 'scripts/soykufu-app-webhook-readonly.test.mjs', 'scripts/soykufu-meta-pair-readonly.mjs', 'scripts/soykufu-meta-pair-readonly.test.mjs', 'scripts/stopped-saved-recovery.mjs', 'scripts/stopped-saved-recovery.test.mjs', 'scripts/stopped-once-restore.mjs', 'scripts/stopped-once-restore.test.mjs', 'scripts/stopped-migration-review.mjs', 'scripts/stopped-migration-review.test.mjs', 'scripts/stopped-database-envelope.mjs', 'scripts/stopped-database-envelope.test.mjs', 'scripts/stopped-export-drill.mjs', 'scripts/stopped-export-drill.test.mjs', 'scripts/stopped-backup-preflight.mjs', 'scripts/stopped-backup-preflight.test.mjs', 'scripts/recovery-bucket-guard.mjs', 'scripts/recovery-bucket-guard.test.mjs', 'scripts/stopped-protection-apply.mjs', 'scripts/stopped-protection-apply.test.mjs', 'scripts/stopped-database-copy-once.mjs', 'scripts/stopped-database-copy-once.test.mjs', 'scripts/stopped-database-copy-entry.mjs', 'scripts/stopped-database-copy-entry.test.mjs', 'scripts/stopped-migration-apply.mjs', 'scripts/stopped-migration-apply.test.mjs', 'scripts/stopped-approved-migration-plan.json', 'scripts/stopped-deployment-candidate.mjs', 'scripts/stopped-deployment-candidate.test.mjs', 'scripts/stopped-backend-apply.mjs', 'scripts/stopped-backend-apply.test.mjs']
+    paths: ['scripts/stopped-receiving-app-id-once.mjs', 'scripts/stopped-receiving-app-id-once.test.mjs', 'scripts/stopped-receiving-secret-once.mjs', 'scripts/stopped-receiving-secret-once.test.mjs', 'scripts/stopped-receiving-backend-audit.mjs', 'scripts/stopped-receiving-backend-audit.test.mjs', 'scripts/stopped-receiving-backend-once.mjs', 'scripts/stopped-receiving-backend-once.test.mjs', 'scripts/stopped-receiving-preflight.mjs', 'scripts/stopped-receiving-preflight.test.mjs', 'scripts/stopped-registered-account.test.mjs', 'scripts/stopped-installation-snapshot.mjs', 'scripts/stopped-account-preparation-apply.mjs', 'scripts/stopped-account-preparation-apply.test.mjs', 'scripts/stopped-account-registration-once.mjs', 'scripts/stopped-account-registration-once.test.mjs', '.github/workflows/soykufu-smoke.yml', 'scripts/soykufu-smoke.mjs', 'scripts/stopped-runtime-snapshot.mjs', 'scripts/stopped-time-travel-proof.mjs', 'scripts/stopped-recovery-reference.mjs', 'scripts/soykufu-meta-readonly.mjs', 'scripts/soykufu-meta-readonly.test.mjs', 'scripts/stopped-connection-readiness.mjs', 'scripts/stopped-connection-readiness.test.mjs', 'scripts/soykufu-app-webhook-readonly.mjs', 'scripts/soykufu-app-webhook-readonly.test.mjs', 'scripts/soykufu-meta-pair-readonly.mjs', 'scripts/soykufu-meta-pair-readonly.test.mjs', 'scripts/stopped-saved-recovery.mjs', 'scripts/stopped-saved-recovery.test.mjs', 'scripts/stopped-once-restore.mjs', 'scripts/stopped-once-restore.test.mjs', 'scripts/stopped-migration-review.mjs', 'scripts/stopped-migration-review.test.mjs', 'scripts/stopped-database-envelope.mjs', 'scripts/stopped-database-envelope.test.mjs', 'scripts/stopped-export-drill.mjs', 'scripts/stopped-export-drill.test.mjs', 'scripts/stopped-backup-preflight.mjs', 'scripts/stopped-backup-preflight.test.mjs', 'scripts/recovery-bucket-guard.mjs', 'scripts/recovery-bucket-guard.test.mjs', 'scripts/stopped-protection-apply.mjs', 'scripts/stopped-protection-apply.test.mjs', 'scripts/stopped-database-copy-once.mjs', 'scripts/stopped-database-copy-once.test.mjs', 'scripts/stopped-database-copy-entry.mjs', 'scripts/stopped-database-copy-entry.test.mjs', 'scripts/stopped-migration-apply.mjs', 'scripts/stopped-migration-apply.test.mjs', 'scripts/stopped-approved-migration-plan.json', 'scripts/stopped-deployment-candidate.mjs', 'scripts/stopped-deployment-candidate.test.mjs', 'scripts/stopped-backend-apply.mjs', 'scripts/stopped-backend-apply.test.mjs']
 permissions:
   contents: read
 concurrency:
@@ -174,11 +174,12 @@ jobs:
         run: node --test scripts/stopped-receiving-backend-audit.test.mjs
       - name: Test existing receiving secret installation boundaries
         run: node --test scripts/stopped-receiving-secret-once.test.mjs
-      - name: Save approved existing receiving app secret once
-        if: github.event_name == 'workflow_dispatch' && inputs.receiving_secret_once == true && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss'
+      - name: Test stopped public Meta app ID settings boundary
+        run: node --test scripts/stopped-receiving-app-id-once.test.mjs
+      - name: Configure approved fixed public Meta app ID once
+        if: github.event_name == 'workflow_dispatch' && inputs.receiving_app_id_once == true && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}
-          IG_META_APP_SECRET: ${{ secrets.IG_META_APP_SECRET }}
-          APPROVED_RECEIVING_SECRET: '1'
-        run: node scripts/stopped-receiving-secret-once.mjs
+          APPROVED_RECEIVING_APP_ID: '1'
+        run: node scripts/stopped-receiving-app-id-once.mjs
