@@ -1,5 +1,37 @@
 # SOY-KUFU: stopped account registration and receiving preparation
 
+## Current accepted production state (2026-11-24)
+
+Owner-approved backend update run45322776381 passed full content/settings/
+business-row/assets/private-route acceptance. Accepted index.js SHA256:
+638363e607c2e642da2c5a35c342fab0ff355078e46a86855da6128b34bf4cd4.
+Deployment fingerprint:
+66d2c1c0033633bf497964e2adaa2639ba1f02e37cc3afe91c667026f8340564.
+
+One-time server-side exchange and stopped registration run45323225017 passed:
+same USER subject/app/full scopes/granular targets, longer validated lifetime,
+fixed Page/IG/grants, exactly one encrypted nondefault account, unchanged old
+business rows/configuration/subscriptions, stop/lock and DB integrity. The
+user-token lifetime gate was more than seven and at most 61 days, not an
+export of an exact expiration date. The derived Page credential is encrypted
+in the designated D1; the intermediate long-lived USER value was not exported.
+
+Both approvals are consumed. The new transport CLI and workflow choices are
+retired; do not repeat either run or resurrect the retired transport.
+`STOPPED_REGISTERED_PHASE=1` is an official-runner read-only observation mode,
+not a production flag or release permission. It requires the exact fixed
+encrypted account and still verifies stop, empty followers and all 41 schema
+entries. Default installation inspection retains its original empty-only
+contract for pre-registration operations.
+
+GitHub's provisioning USER secret was not automatically rewritten. Its later
+expiry does not prove the separately stored Page credential is invalid and
+must not trigger blanket reauthentication. Use the stored account's own health
+evidence when assessing operational token failure. No webhook subscription,
+verified receiving, sending, LINE handoff, or legacy ownership migration has
+been enabled. Worker app secret/verify token/app ID remain separate receiving
+prerequisites. The source below records the earlier preparation contract.
+
 This is a review plan, not execution permission. No account registration,
 webhook subscription, credential installation, or message dispatch occurs.
 
@@ -28,7 +60,7 @@ Subscription `fields` may be documented strings or named objects in current
 SDK responses; inspect both. Report active=false/unknown, foreign callbacks,
 duplicate objects and incomplete pagination without merging them into success.
 
-## Verified starting point
+## Historical verified starting point before registration
 
 - Production backend accepted once in run 45310176568; mutation entry retired.
 - Deployment fingerprint: `693814e3519ac1d1521ab0fb40288043d18952cf32cbee232d784fa5f72ac145`.
@@ -61,11 +93,10 @@ duplicate objects and incomplete pagination without merging them into success.
 
 ## Registration side effects to account for before execution
 
-Source preparation now guards `ensureDefaultAccount` at entry while
+The accepted production backend now guards `ensureDefaultAccount` at entry while
 `OUTBOUND_PREPARATION_LOCK=1`. Lazy account reads cannot seed environment
 credentials, backfill legacy NULL ownership, or stamp account_backfill_done
-while this lock remains. This source change is not a production deployment;
-verify its accepted backend artifact before registration. Releasing the lock
+while this lock remains. Its backend acceptance is run45322776381. Releasing the lock
 would restore normal legacy behavior, so reconcile ownership before release.
 
 Read `apps/worker/src/routes/accounts.ts`, `lib/validate-ig-account.ts`, and

@@ -4,6 +4,9 @@ import {assessStoppedConnectionReadiness} from './stopped-connection-readiness.m
 const origin = 'https://soykufu-ig-harness-20261119.soykufu.workers.dev';
 const key = process.env.IG_HARNESS_API_KEY;
 const cfToken = process.env.CLOUDFLARE_API_TOKEN;
+// Enabled only in the official workflow after the accepted one-time registration.
+const registeredAccount = process.env.STOPPED_REGISTERED_PHASE === '1';
+const expectedAccounts = registeredAccount ? 1 : 0;
 if (!key || !cfToken) throw new Error('Verification credentials missing');
 try {
   const response = await fetch(`${origin}/login/`, { signal: AbortSignal.timeout(20000) });
@@ -23,7 +26,7 @@ try {
   });
   const data = await d1.json();
   const state = data.result?.[0]?.results?.[0];
-  if (!d1.ok || data.success !== true || state?.paused !== '1' || Number(state.accounts) !== 0 || Number(state.followers) !== 0) throw new Error('Stopped empty installation verification failed');
+  if (!d1.ok || data.success !== true || state?.paused !== '1' || Number(state.accounts) !== expectedAccounts || Number(state.followers) !== 0) throw new Error('Stopped empty installation verification failed');
   const query=async sql=>{
     if(!/^\s*(SELECT|PRAGMA)\b/i.test(sql)||/;/.test(sql))throw Error('Read-only snapshot rejected');
     const r=await fetch('https://api.cloudflare.com/client/v4/accounts/e76a3f504309ca9289d8dfa3ee504502/d1/database/e55c3b84-ea9a-48fd-a7a3-08253089d295/query',{
@@ -33,7 +36,7 @@ try {
     if(!r.ok||body.success!==true||!Array.isArray(body.result?.[0]?.results))throw Error('Read-only snapshot failed');
     return body.result[0].results;
   };
-  const snapshot=await readStoppedInstallationSnapshot({repoDir:process.cwd(),query});
+  const snapshot=await readStoppedInstallationSnapshot({repoDir:process.cwd(),query,registeredAccount});
   const runtime=await readStoppedRuntimeSnapshot({sourceSha:process.env.GITHUB_SHA,migrationInventoryHash:snapshot.migrationLedgerSha256,recoveryKey:key,read:async path=>{
     if(!isStoppedRuntimeReadPath(path))throw new Error('Unexpected runtime read');
     const r=await fetch('https://api.cloudflare.com/client/v4'+path,{method:'GET',headers:{Authorization:`Bearer ${cfToken}`},signal:AbortSignal.timeout(15000)});
@@ -41,13 +44,13 @@ try {
   }});
   // Recheck stop after metadata reads. The checks do not authorize deployment.
   const final=(await query("SELECT (SELECT value FROM integration_settings WHERE key='outbound_paused') AS paused,(SELECT COUNT(*) FROM ig_accounts) AS accounts,(SELECT COUNT(*) FROM followers) AS followers"))[0];
-  if(final?.paused!=='1'||final.accounts!==0||final.followers!==0)throw new Error('Stopped empty installation verification failed');
+  if(final?.paused!=='1'||final.accounts!==expectedAccounts||final.followers!==0)throw new Error('Stopped empty installation verification failed');
   const finalLedger=await query('SELECT name,sha256 FROM ig_schema_migrations');
   if(migrationLedgerFingerprint(finalLedger)!==snapshot.migrationLedgerSha256)throw new Error('Migration ledger changed during runtime verification');
   console.log('Stopped preparation snapshot (read only): '+JSON.stringify({...snapshot,...runtime}));
-  console.log('Stopped connection readiness (metadata only): '+JSON.stringify(assessStoppedConnectionReadiness({...snapshot,...runtime})));
+  console.log('Stopped connection readiness (metadata only): '+JSON.stringify(registeredAccount?{state:'stopped_registered_account_observed',registeredAccountVerified:snapshot.registeredAccountVerified===true,registrationAuthorized:false,webhookActivationAuthorized:false,messagesAuthorized:false,receivingVerified:false}:assessStoppedConnectionReadiness({...snapshot,...runtime})));
   console.log(`Verified Japanese login HTML/JavaScript: ${origin}/login/`);
-  console.log('Verified unauthenticated API=401, authenticated API=200, database healthy, outbound paused, accounts=0, followers=0.');
+  console.log(`Verified unauthenticated API=401, authenticated API=200, database healthy, outbound paused, accounts=${expectedAccounts}, followers=0.`);
   console.log('Read-only smoke check: no message, Meta authentication, deployment or content change.');
 } catch(error) {
   // Never include transport errors that could contain request headers.
