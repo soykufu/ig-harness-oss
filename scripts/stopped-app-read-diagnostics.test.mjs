@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {inspectReceivingPreflight} from './stopped-receiving-preflight.mjs';
 const env={GITHUB_REPOSITORY:'soykufu/ig-harness-oss',GITHUB_REF:'refs/heads/main',GITHUB_EVENT_NAME:'workflow_dispatch'};
 function fixture(readFailure){return{env,
- readRuntime:async()=>({deploymentStable:true,deployedBindingsVerified:true,preparationLockVerified:true,extraFlagsVerified:true,deploymentFingerprint:'90cb7e59e4e7f173314fae5f6f4eb6617b9272b7059f738465ca6407413c4093'}),
+ readRuntime:async()=>({deploymentStable:true,deployedBindingsVerified:true,preparationLockVerified:true,extraFlagsVerified:true,deploymentFingerprint:'02c5cc03682d18786407e22ee1cc9e4440b12197a87680789436c9eb7a59af61'}),
  readAccounts:async()=>[{igUserId:'17841402028638204',username:'soykufu',pageId:'1632563283635095',connectionType:'facebook_login',isActive:true,isDefault:false}],
  readApp:async()=>({ok:true,appIdentityVerified:true}),
  readWorkerApp:async()=>({appId:'2224712165014101',status:'unknown',objects:[],message:'アプリ側の購読情報を確認できませんでした。',readFailure}),

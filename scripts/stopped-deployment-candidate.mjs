@@ -4,7 +4,7 @@ import {readStoppedRuntimeSnapshot,isStoppedRuntimeReadPath} from './stopped-run
 const A='e76a3f504309ca9289d8dfa3ee504502',D='e55c3b84-ea9a-48fd-a7a3-08253089d295',NAME='soykufu-ig-harness-20261119',W='/accounts/'+A+'/workers/scripts/'+NAME;
 // Accepted receiving backend45329490585/audit45330175544, encrypted App Secret45330744132 and public app ID45331593999; registration45323225017 is preserved.
 // A later deployment must be reconciled explicitly, never learned automatically.
-export const CANDIDATE_BASELINE_FINGERPRINT='90cb7e59e4e7f173314fae5f6f4eb6617b9272b7059f738465ca6407413c4093';
+export const CANDIDATE_BASELINE_FINGERPRINT='02c5cc03682d18786407e22ee1cc9e4440b12197a87680789436c9eb7a59af61';
 const FP=CANDIDATE_BASELINE_FINGERPRINT;
 export function candidateBaselineReady(runtime,installation){
  const m=installation?.migrationInventory;
