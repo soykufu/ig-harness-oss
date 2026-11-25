@@ -79,10 +79,9 @@ test('mask exactly verify_token and updated_at, preserving other account cells',
  for(const k of ['v0','v3','v4']){const foreign=structuredClone(changed);foreign[0][k]='different';assert.notDeepEqual(maskVerifyColumns(before,columns),maskVerifyColumns(foreign,columns));}
  assert.equal(before[0].t1,'null');assert.throws(()=>maskVerifyColumns([],columns));assert.throws(()=>maskVerifyColumns([...before,...before],columns));assert.throws(()=>maskVerifyColumns(before,columns.slice(0,1)));
 });
-test('transport contains only intended PATCH, no webhook call or post subscriptions',async()=>{
+test('consumed CLI has no live credential or network transport',async()=>{
  const source=await readFile(new URL('./stopped-receiving-verify-token-once.mjs',import.meta.url),'utf8');
- assert.equal((source.match(/method:'PATCH'/g)||[]).length,1);
- assert.match(source,/JSON\.stringify\(\{verifyToken:e\.IG_WEBHOOK_VERIFY_TOKEN\}\)/);
- assert.doesNotMatch(source,/\/webhook['"?]|\/subscribed_apps|\/subscriptions.*method:'POST'|accessToken:|appSecret:|console\.log\(e\.|IG_META_USER_ACCESS_TOKEN|writeFile/);
- assert.match(source,/console\.log\(JSON\.stringify\(result\)\)/);
+ assert.match(source,/receiving_verify_token_retired/);
+ assert.match(source,/consumedRunId:45617138533/);
+ assert.doesNotMatch(source,/process\.env|fetch\(|method:'PATCH'|boundedJson|IG_META_USER_ACCESS_TOKEN/);
 });

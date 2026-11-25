@@ -2,10 +2,6 @@ name: SOY-KUFU verify stopped admin
 on:
   workflow_dispatch:
     inputs:
-      receiving_verify_token_once:
-        description: 'Owner-approved one-time fixed-account verification credential install while stopped; no webhook request, subscription or sending'
-        type: boolean
-        default: false
       receiving_backend_audit:
         description: 'Audit accepted receiving backend and actual paused guardrails only; never replace, subscribe or send'
         type: boolean
@@ -190,14 +186,5 @@ jobs:
       - name: Test verification credential metadata boundaries
         run: node --test scripts/stopped-verify-token-readonly.test.mjs
 
-      - name: Test fixed account verification credential installation offline
+      - name: Test retired verification credential installation boundaries offline
         run: node --test scripts/stopped-receiving-verify-token-once.test.mjs
-      - name: Install owner-approved dedicated verification credential once while stopped
-        if: github.event_name == 'workflow_dispatch' && inputs.receiving_verify_token_once == true && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss' && github.run_number == 93 && github.run_attempt == 1
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}
-          IG_META_APP_SECRET: ${{ secrets.IG_META_APP_SECRET }}
-          IG_WEBHOOK_VERIFY_TOKEN: ${{ secrets.IG_WEBHOOK_VERIFY_TOKEN }}
-          APPROVED_RECEIVING_VERIFY_TOKEN: 'fixed-account-verification-only'
-        run: node scripts/stopped-receiving-verify-token-once.mjs
