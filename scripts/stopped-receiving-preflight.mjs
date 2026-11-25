@@ -2,7 +2,7 @@ import {pathToFileURL} from 'node:url';
 import {inspectAppWebhook} from './soykufu-app-webhook-readonly.mjs';
 import {readStoppedRuntimeSnapshot,isStoppedRuntimeReadPath} from './stopped-runtime-snapshot.mjs';
 const ORIGIN='https://soykufu-ig-harness-20261119.soykufu.workers.dev';
-const FP='154f4550c1a25a023cbc2e2b01239e07bddd138e0a6095f4dd7a6ceee3e868e6';
+const FP='90cb7e59e4e7f173314fae5f6f4eb6617b9272b7059f738465ca6407413c4093';
 const safeState=v=>['ok','missing','error','skipped'].includes(v)?v:'unknown';
 export async function inspectReceivingPreflight({env,readRuntime,readAccounts,readApp,readWorkerApp}){
  const held=reason=>({ok:false,state:'receiving_preflight_held',reason,credentialWritesAttempted:false,subscriptionAttempted:false,messagesSent:0});
