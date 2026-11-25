@@ -61,6 +61,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Check new webhook verification credential metadata once
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss' && github.run_number == 90 && github.run_attempt == 1
+        env:
+          IG_WEBHOOK_VERIFY_TOKEN: ${{ secrets.IG_WEBHOOK_VERIFY_TOKEN }}
+        run: node scripts/stopped-verify-token-readonly.mjs
+      - name: Test verification credential metadata boundaries
+        run: node --test scripts/stopped-verify-token-readonly.test.mjs
       - name: Read stopped schema and deployed runtime metadata without changes
         if: github.event_name != 'workflow_dispatch' || (inputs.restore_plan == '' && inputs.native_migration_review == '' && inputs.backup_preflight != true)
         env:
