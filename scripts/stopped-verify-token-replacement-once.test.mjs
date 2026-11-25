@@ -10,25 +10,15 @@ test('only separately approved replacement run 96 attempt 1 is authorized',()=>{
  for(const [key,value]of Object.entries({GITHUB_ACTIONS:'false',GITHUB_REPOSITORY:'foreign/repo',GITHUB_REF:'refs/heads/other',GITHUB_EVENT_NAME:'push',GITHUB_RUN_NUMBER:'93',GITHUB_RUN_ATTEMPT:'2',APPROVED_VERIFY_TOKEN_REPLACEMENT:'fixed-account-verification-only'}))assert.equal(verifyReplacementRun({...official,[key]:value}),false);
  for(const n of ['95','97'])assert.equal(verifyReplacementRun({...official,GITHUB_RUN_NUMBER:n}),false);
 });
-test('unofficial CLI never performs transport or reveals candidate',()=>{
- const value='synthetic_candidate_value_1234567890';
- const r=spawnSync(process.execPath,[new URL('./stopped-verify-token-replacement-once.mjs',import.meta.url).pathname],{env:{...official,GITHUB_RUN_NUMBER:'93',IG_WEBHOOK_VERIFY_TOKEN:value},encoding:'utf8'});
- assert.equal(r.status,1);const receipt=JSON.parse(r.stdout);
- assert.equal(receipt.reason,'official_single_run_required');assert.equal(receipt.credentialWriteAttempted,false);assert.equal(receipt.operation,'saved_note_verification_replacement');
- assert.ok(!r.stdout.includes(value));assert.equal(r.stderr,'');
-});
-test('missing replacement candidate holds before any provider request',()=>{
- const r=spawnSync(process.execPath,[new URL('./stopped-verify-token-replacement-once.mjs',import.meta.url).pathname],{env:official,encoding:'utf8'});
- assert.equal(r.status,1);const receipt=JSON.parse(r.stdout);assert.equal(receipt.reason,'dedicated_credential_unverified');assert.equal(receipt.credentialWriteAttempted,false);assert.equal(r.stderr,'');
-});
-test('new adapter uses existing audited contract and only fixed account verifyToken PATCH',async()=>{
+test('consumed replacement CLI cannot read live secrets or perform network requests',async()=>{
  const source=await readFile(new URL('./stopped-verify-token-replacement-once.mjs',import.meta.url),'utf8');
- assert.match(source,/installVerifyTokenOnce,dedicatedValue,maskVerifyColumns/);
- assert.equal((source.match(/method:'PATCH'/g)||[]).length,1);
- assert.match(source,/JSON\.stringify\(\{verifyToken:e\.IG_WEBHOOK_VERIFY_TOKEN\}\)/);
- assert.match(source,/WHERE id=\? AND verify_token=\?/);
- assert.match(source,/account\.id,e\.IG_WEBHOOK_VERIFY_TOKEN/);
- assert.doesNotMatch(source,/\/webhook['"?]|subscribed_apps|accessToken:|appSecret:|IG_META_USER_ACCESS_TOKEN|console\.log\(e\.|writeFile/);
+ assert.match(source,/verify_token_replacement_retired/);assert.match(source,/consumedRunId:45624136946/);
+ assert.doesNotMatch(source,/process\.env|fetch\(|method:'PATCH'|boundedJson/);
+});
+test('retired CLI emits only consumed state without the candidate',()=>{
+ const value='synthetic_candidate_value_1234567890';
+ const r=spawnSync(process.execPath,[new URL('./stopped-verify-token-replacement-once.mjs',import.meta.url).pathname],{env:{...official,IG_WEBHOOK_VERIFY_TOKEN:value},encoding:'utf8'});
+ assert.equal(r.status,1);const receipt=JSON.parse(r.stdout);assert.equal(receipt.state,'verify_token_replacement_retired');assert.equal(receipt.consumedRunId,45624136946);assert.equal(receipt.credentialWriteAttempted,false);assert.ok(!r.stdout.includes(value));assert.equal(r.stderr,'');
 });
 test('prior one-time CLI remains retired and has no credential transport',async()=>{
  const source=await readFile(new URL('./stopped-receiving-verify-token-once.mjs',import.meta.url),'utf8');
