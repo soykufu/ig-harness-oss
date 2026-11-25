@@ -14,15 +14,19 @@ export interface AppWebhookReport {
   checkedAt:string;status:'ok'|'fail'|'unknown';appId:string|null;callbackUrl:string|null;
   objects:AppSubscriptionObject[];missingFields:string[];callbackMatches:boolean|null;
   listingIncomplete?:boolean;message?:string|null;
+  readFailure?:'transport'|'http_auth'|'http_rate_limit'|'http_other'|'body_read'|'response_too_large'|'invalid_json'|'invalid_response'|'invalid_fields'|'invalid_app_id';
+}
+class SubscriptionReadError extends Error {
+  constructor(readonly code:NonNullable<AppWebhookReport['readFailure']>){super('subscription_read_failed');}
 }
 export async function resolveAppId(env:CredentialEnv&{IG_APP_ID?:string;IG_APP_SECRET?:string},db:D1Database,accountId:string):Promise<string|null>{
   if(env.IG_APP_ID)return env.IG_APP_ID;
   const debug=await loadTokenDebug(db,accountId);return debug?.status==='ok'?debug.appId??null:null;
 }
 function normalizeFields(value:unknown):string[]{
-  if(!Array.isArray(value))throw Error('invalid_subscription_fields');
+  if(!Array.isArray(value))throw new SubscriptionReadError('invalid_fields');
   const fields=value.map((f:unknown)=>typeof f==='string'?f:f&&typeof f==='object'&&'name'in f?(f as {name:unknown}).name:null);
-  if(fields.some(f=>typeof f!=='string'||!/^[a-z_]{1,64}$/.test(f))||new Set(fields).size!==fields.length)throw Error('invalid_subscription_fields');
+  if(fields.some(f=>typeof f!=='string'||!/^[a-z_]{1,64}$/.test(f))||new Set(fields).size!==fields.length)throw new SubscriptionReadError('invalid_fields');
   return fields as string[];
 }
 function callback(value:unknown):string|null{
@@ -30,20 +34,23 @@ function callback(value:unknown):string|null{
   try{const u=new URL(value);if(!['https:','http:'].includes(u.protocol)||u.username||u.password||u.search||u.hash)return null;return u.href;}catch{return null;}
 }
 async function fetchSubscriptions(appId:string,secret:string):Promise<{objects:AppSubscriptionObject[];incomplete:boolean}>{
-  if(!/^\d{1,64}$/.test(appId))throw Error('invalid_app_id');
-  const res=await fetch('https://graph.facebook.com/'+GRAPH_VERSION+'/'+appId+'/subscriptions',{
+  if(!/^\d{1,64}$/.test(appId))throw new SubscriptionReadError('invalid_app_id');
+  let res:Response;
+  try{res=await fetch('https://graph.facebook.com/'+GRAPH_VERSION+'/'+appId+'/subscriptions',{
     method:'GET',redirect:'error',headers:{Authorization:'Bearer '+appId+'|'+secret},signal:AbortSignal.timeout(10000),
-  });
-  if(!res.ok||!res.body)throw Error('subscription_read_failed');
+  });}catch{throw new SubscriptionReadError('transport');}
+  if(!res.ok)throw new SubscriptionReadError(res.status===401||res.status===403?'http_auth':res.status===429?'http_rate_limit':'http_other');
+  if(!res.body)throw new SubscriptionReadError('body_read');
   const reader=res.body.getReader(),parts:Uint8Array[]=[];let size=0;
-  try{for(;;){const {value,done}=await reader.read();if(done)break;size+=value.byteLength;if(size>65536)throw Error('subscription_response_too_large');parts.push(value);}}finally{await reader.cancel();}
+  try{for(;;){const {value,done}=await reader.read();if(done)break;size+=value.byteLength;if(size>65536)throw new SubscriptionReadError('response_too_large');parts.push(value);}}catch(error){throw error instanceof SubscriptionReadError?error:new SubscriptionReadError('body_read');}finally{try{await reader.cancel();}catch{/* cleanup must not hide the read outcome */}}
   const bytes=new Uint8Array(size);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.byteLength;}
-  const payload=JSON.parse(new TextDecoder().decode(bytes)) as {data?:unknown;error?:unknown;paging?:{next?:unknown}};
-  if(!payload||payload.error||!Array.isArray(payload.data))throw Error('subscription_response_invalid');
+  let payload:{data?:unknown;error?:unknown;paging?:{next?:unknown}};
+  try{payload=JSON.parse(new TextDecoder().decode(bytes));}catch{throw new SubscriptionReadError('invalid_json');}
+  if(!payload||payload.error||!Array.isArray(payload.data))throw new SubscriptionReadError('invalid_response');
   const objects=payload.data.map((item:unknown)=>{
-    if(!item||typeof item!=='object')throw Error('subscription_response_invalid');
+    if(!item||typeof item!=='object')throw new SubscriptionReadError('invalid_response');
     const r=item as {object?:unknown;callback_url?:unknown;fields?:unknown;active?:unknown};
-    if(typeof r.object!=='string'||!r.object)throw Error('subscription_response_invalid');
+    if(typeof r.object!=='string'||!r.object)throw new SubscriptionReadError('invalid_response');
     return {object:r.object,callbackUrl:callback(r.callback_url),fields:normalizeFields(r.fields),active:typeof r.active==='boolean'?r.active:null};
   });
   return{objects,incomplete:payload.paging?.next!==undefined&&payload.paging.next!==null&&payload.paging.next!==''};
@@ -68,7 +75,7 @@ export async function checkAppWebhook(
     const status=unknown?'unknown':instagram.length!==1||!callbackMatches||relevant.some(o=>o.active!==true)||missingFields.length?'fail':'ok';
     return{checkedAt,status,appId,callbackUrl:instagram[0]?.callbackUrl??relevant[0]?.callbackUrl??null,objects,missingFields,callbackMatches,listingIncomplete:incomplete,
       message:status==='ok'?null:unknown?'購読情報が不完全なため、Metaのアプリ管理画面で確認してください。':'Metaのアプリ管理画面でInstagramのWebhook購読・受信先・有効状態を確認してください。'};
-  }catch{return{...base,status:'unknown',message:'アプリ側の購読情報を確認できませんでした。'};}
+  }catch(error){return{...base,status:'unknown',...(error instanceof SubscriptionReadError?{readFailure:error.code}:{}),message:'アプリ側の購読情報を確認できませんでした。'};}
 }
 export interface FixAppWebhookResult {
   fixed:boolean;refused?:boolean;foreignUrl?:string;verifyTokenGenerated?:boolean;manualSetupRequired?:boolean;report:AppWebhookReport;
@@ -86,3 +93,4 @@ export async function fixAppWebhook(
   if(report.status==='ok')return{fixed:true,verifyTokenGenerated:false,report};
   return{fixed:false,refused:true,verifyTokenGenerated:false,manualSetupRequired:true,report};
 }
+

@@ -63,3 +63,30 @@ describe('Instagram dashboard setup boundary',()=>{
   const {db}=fixtureDb();await saveTokenDebug(db,'acc1',{checkedAt:new Date().toISOString(),status:'ok',appId:'555444'});expect(await resolveAppId({IG_APP_SECRET:'s'} as never,db,'acc1')).toBe('555444');
  });
 });
+describe('safe app subscription read diagnostics',()=>{
+ for(const [mode,readFailure] of [
+  ['throw','transport'],['401','http_auth'],['403','http_auth'],['429','http_rate_limit'],['500','http_other'],
+  ['json','invalid_json'],['shape','invalid_response'],['fields','invalid_fields'],['size','response_too_large'],['stream','body_read'],
+ ] as const)it('classifies '+mode+' without returning provider data or making another request',async()=>{
+  const fetch=vi.fn(async()=>{
+   if(mode==='throw')throw Error('private-app-secret');
+   if(/^\d+$/.test(mode))return new Response('private-app-secret',{status:Number(mode)});
+   if(mode==='json')return new Response('private-app-secret');
+   if(mode==='shape')return new Response(JSON.stringify({error:{message:'private-app-secret'}}));
+   if(mode==='fields')return reply([row({fields:undefined})]);
+   if(mode==='size')return new Response('private-app-secret'.repeat(5000));
+   return new Response(new ReadableStream({start(controller){controller.error(Error('private-app-secret'));}}));
+  });
+  vi.stubGlobal('fetch',fetch);const {db,settings}=fixtureDb();const result=await checkAppWebhook(env(),db,account);
+  expect(result.status).toBe('unknown');expect(result.readFailure).toBe(readFailure);
+  expect(JSON.stringify(result)).not.toContain('private-app-secret');expect(fetch).toHaveBeenCalledTimes(1);expect(settings.size).toBe(0);
+  expect((fetch.mock.calls[0] as unknown as [string,RequestInit])[1].method).toBe('GET');
+ });
+ it('keeps valid minimal DM fields visible while reporting missing optional comment fields',async()=>{
+  vi.stubGlobal('fetch',vi.fn(async()=>reply([row({fields:['messages','messaging_postbacks','messaging_referral']})])));
+  const result=await checkAppWebhook(env(),fixtureDb().db,account);
+  expect(result.status).toBe('fail');expect(result.readFailure).toBeUndefined();expect(result.objects[0]?.fields).toEqual(['messages','messaging_postbacks','messaging_referral']);
+  expect(result.missingFields).toEqual(['comments','mentions','live_comments']);
+ });
+});
+
