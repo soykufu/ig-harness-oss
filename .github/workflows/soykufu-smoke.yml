@@ -2,10 +2,6 @@ name: SOY-KUFU verify stopped admin
 on:
   workflow_dispatch:
     inputs:
-      diagnostic_backend_once:
-        description: 'Owner-approved diagnostic backend only, run 103 attempt 1; preserve stop, lock, DB, assets and credentials'
-        type: boolean
-        default: false
       receiving_backend_audit:
         description: 'Audit accepted receiving backend and actual paused guardrails only; never replace, subscribe or send'
         type: boolean
@@ -145,17 +141,17 @@ jobs:
       - name: Test stopped candidate boundaries offline
         run: node --test scripts/stopped-deployment-candidate.test.mjs
       - uses: pnpm/action-setup@v4
-        if: github.event_name == 'workflow_dispatch' && (inputs.deployment_candidate == true || inputs.diagnostic_backend_once == true)
+        if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
         with:
           version: 9.15.4
       - name: Install candidate build dependencies
-        if: github.event_name == 'workflow_dispatch' && (inputs.deployment_candidate == true || inputs.diagnostic_backend_once == true)
+        if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
         run: pnpm install --frozen-lockfile
       - name: Build candidate dependencies
-        if: github.event_name == 'workflow_dispatch' && (inputs.deployment_candidate == true || inputs.diagnostic_backend_once == true)
+        if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
         run: pnpm --filter @ig-harness/shared --filter @ig-harness/ig-sdk build
       - name: Read settings and build deployment candidate without mutation
-        if: github.event_name == 'workflow_dispatch' && (inputs.deployment_candidate == true || inputs.diagnostic_backend_once == true)
+        if: github.event_name == 'workflow_dispatch' && inputs.deployment_candidate == true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: node scripts/stopped-deployment-candidate.mjs
@@ -196,12 +192,5 @@ jobs:
       - name: Test retired saved-note verification replacement boundaries offline
         run: node --test scripts/stopped-verify-token-replacement-once.test.mjs
 
-      - name: Test diagnostic backend one-time boundaries
+      - name: Test retired diagnostic backend boundaries
         run: node --test scripts/stopped-diagnostic-backend-once.test.mjs
-      - name: Apply exact owner-approved diagnostic backend once
-        if: github.event_name == 'workflow_dispatch' && inputs.diagnostic_backend_once == true && github.run_number == 103 && github.run_attempt == 1 && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}
-          APPROVED_DIAGNOSTIC_BACKEND: '1'
-        run: node scripts/stopped-diagnostic-backend-once.mjs

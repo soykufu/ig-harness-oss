@@ -2,7 +2,7 @@ import {pathToFileURL} from 'node:url';import {createHash} from 'node:crypto';im
 import{backendEntry}from'./stopped-receiving-backend-once.mjs';import{summarizeWorkerBundle}from'./stopped-backup-preflight.mjs';
 import{readStoppedRuntimeSnapshot,isStoppedRuntimeReadPath}from'./stopped-runtime-snapshot.mjs';import{readStoppedInstallationSnapshot}from'./stopped-installation-snapshot.mjs';
 const A='e76a3f504309ca9289d8dfa3ee504502',D='e55c3b84-ea9a-48fd-a7a3-08253089d295',NAME='soykufu-ig-harness-20261119',ORIGIN='https://'+NAME+'.soykufu.workers.dev';
-export const RECEIVING_INDEX_SHA256='92078370a2a1cdba47bb569db0f45012214db53be0d7467b5258c938a3e3e389';
+export const RECEIVING_INDEX_SHA256='e8992c2d517bd120947ce954356a2e5782d8d52450cf2a73e08abeba6c4efb07';
 const hash=b=>createHash('sha256').update(b).digest('hex');
 export async function auditReceivingBackend({official,readSnapshot,readModules,readAccounts,readGuardrails,readIntegrity}){
  const held=reason=>({ok:false,state:'receiving_backend_audit_held',reason,replacementAttempted:false,credentialWriteAttempted:false,subscriptionAttempted:false,messagesSent:0});
