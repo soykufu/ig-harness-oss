@@ -2,6 +2,10 @@ name: SOY-KUFU verify stopped admin
 on:
   workflow_dispatch:
     inputs:
+      verify_token_replacement_once:
+        description: 'Owner-approved one-time saved-note verification credential replacement while stopped; no webhook request, subscription or sending'
+        type: boolean
+        default: false
       receiving_backend_audit:
         description: 'Audit accepted receiving backend and actual paused guardrails only; never replace, subscribe or send'
         type: boolean
@@ -188,3 +192,15 @@ jobs:
 
       - name: Test retired verification credential installation boundaries offline
         run: node --test scripts/stopped-receiving-verify-token-once.test.mjs
+
+      - name: Test saved-note verification credential replacement boundaries offline
+        run: node --test scripts/stopped-verify-token-replacement-once.test.mjs
+      - name: Replace owner-approved saved-note verification credential once while stopped
+        if: github.event_name == 'workflow_dispatch' && inputs.verify_token_replacement_once == true && github.ref == 'refs/heads/main' && github.repository == 'soykufu/ig-harness-oss' && github.run_number == 96 && github.run_attempt == 1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          IG_HARNESS_API_KEY: ${{ secrets.IG_HARNESS_API_KEY }}
+          IG_META_APP_SECRET: ${{ secrets.IG_META_APP_SECRET }}
+          IG_WEBHOOK_VERIFY_TOKEN: ${{ secrets.IG_WEBHOOK_VERIFY_TOKEN }}
+          APPROVED_VERIFY_TOKEN_REPLACEMENT: 'saved-note-replacement-only'
+        run: node scripts/stopped-verify-token-replacement-once.mjs
