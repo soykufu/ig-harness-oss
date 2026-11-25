@@ -14,7 +14,7 @@ describe('app webhook observation',()=>{
  it('uses one GET, header credentials and no redirect; explicit active string fields pass',async()=>{
   const fetch=vi.fn(async()=>reply([row()]));vi.stubGlobal('fetch',fetch);const {db}=fixtureDb();const r=await checkAppWebhook(env(),db,account);
   expect(r.status).toBe('ok');expect(r.callbackMatches).toBe(true);expect(r.missingFields).toEqual([]);expect(fetch).toHaveBeenCalledTimes(1);
-  const [url,options]=fetch.mock.calls[0] as unknown as [string,RequestInit];expect(url).toBe('https://graph.facebook.com/v25.0/999888/subscriptions');expect(options.method).toBe('GET');expect(options.redirect).toBe('error');expect(options.headers).toEqual({Authorization:'Bearer 999888|private-app-secret'});
+  const [url,options]=fetch.mock.calls[0] as unknown as [string,RequestInit];expect(url).toBe('https://graph.facebook.com/v25.0/999888/subscriptions');expect(options.method).toBe('GET');expect(options.redirect).toBe('manual');expect(options.headers).toEqual({Authorization:'Bearer 999888|private-app-secret'});
  });
  it('also accepts named field objects',async()=>{
   vi.stubGlobal('fetch',vi.fn(async()=>reply([row({fields:APP_SUBSCRIPTION_FIELDS.map(name=>({name}))})])));expect((await checkAppWebhook(env(),fixtureDb().db,account)).status).toBe('ok');
@@ -90,3 +90,5 @@ describe('safe app subscription read diagnostics',()=>{
  });
 });
 
+
+describe('Worker redirect compatibility',()=>{it('rejects redirects without following Location or leaking provider data',async()=>{const fetch=vi.fn(async()=>new Response('private-app-secret',{status:302,headers:{Location:'https://foreign.example/private-app-secret'}}));vi.stubGlobal('fetch',fetch);const r=await checkAppWebhook(env(),fixtureDb().db,account);expect(r.status).toBe('unknown');expect(r.readFailure).toBe('http_other');expect(fetch).toHaveBeenCalledTimes(1);expect((fetch.mock.calls[0] as unknown as [string,RequestInit])[1].redirect).toBe('manual');expect(JSON.stringify(r)).not.toContain('private-app-secret');});});

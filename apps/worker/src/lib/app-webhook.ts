@@ -37,7 +37,7 @@ async function fetchSubscriptions(appId:string,secret:string):Promise<{objects:A
   if(!/^\d{1,64}$/.test(appId))throw new SubscriptionReadError('invalid_app_id');
   let res:Response;
   try{res=await fetch('https://graph.facebook.com/'+GRAPH_VERSION+'/'+appId+'/subscriptions',{
-    method:'GET',redirect:'error',headers:{Authorization:'Bearer '+appId+'|'+secret},signal:AbortSignal.timeout(10000),
+    method:'GET',redirect:'manual',headers:{Authorization:'Bearer '+appId+'|'+secret},signal:AbortSignal.timeout(10000),
   });}catch{throw new SubscriptionReadError('transport');}
   if(!res.ok)throw new SubscriptionReadError(res.status===401||res.status===403?'http_auth':res.status===429?'http_rate_limit':'http_other');
   if(!res.body)throw new SubscriptionReadError('body_read');
