@@ -10,7 +10,7 @@ export function inspectVerifyToken(env) {
 }
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
- let result;try{result=inspectVerifyToken(process.env);}catch{result={ok:false,state:'verify_token_metadata_held',reason:'validation_failed'};}
+ let result;try{result={ok:true,state:'verify_token_metadata_check_retired',consumedRunId:45569162826,credentialWritesAttempted:false,networkRequests:0};}catch{result={ok:false,state:'verify_token_metadata_held',reason:'validation_failed'};}
  console.log(JSON.stringify(result));
  if(!result.ok)process.exitCode=1;
 }

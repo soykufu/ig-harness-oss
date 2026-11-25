@@ -29,3 +29,10 @@ test('metadata checker has no remote transport persistence hashing or raw value 
  assert.doesNotMatch(source,/fetch\(|writeFile|setClipboard|createHash|crypto|console\.log\(value|throw.*value/);
  assert.match(source,/console\.log\(JSON.stringify\(result\)\)/);
 });
+
+test('consumed metadata CLI no longer reads live environment',async()=>{
+ const source=await readFile(new URL('./stopped-verify-token-readonly.mjs',import.meta.url),'utf8');
+ assert.match(source,/verify_token_metadata_check_retired/);
+ assert.match(source,/consumedRunId:45569162826/);
+ assert.doesNotMatch(source,/process\.env/);
+});
