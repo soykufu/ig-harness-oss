@@ -52,8 +52,9 @@ export async function checkAccountConnection(client: ConnectionClient, opts: { s
     try {
       // subscribed_fields replaces the account's field list: keep extra
       // fields the operator subscribed manually (e.g. mentions, standby).
-      let current: string[] = [];
-      try { current = await client.getSubscribedFields(); } catch { /* fall back to the required set */ }
+      // An unreadable subscription is unknown, not an empty field list.
+      // Never replace existing settings when their current value is unknown.
+      const current = await client.getSubscribedFields();
       const result = await client.subscribeApp([...new Set([...client.requiredWebhookFields(), ...current])]);
       report.webhook.subscribedNow = result?.success === true;
     } catch (error) { subscribeError = error; }

@@ -175,3 +175,30 @@ describe('connection-type aware required webhook fields', () => {
     expect(report.ok).toBe(true);
   });
 });
+
+
+describe('subscription read failure never becomes permission to replace settings', () => {
+  it('does not POST if existing fields cannot be read, even when the final read recovers', async () => {
+    const client: any = {
+      getMe: vi.fn(async () => ({ username: 'shop' })),
+      subscribeApp: vi.fn(async () => ({ success: true })),
+      getSubscribedFields: vi.fn().mockRejectedValueOnce(new Error('temporary read failure')).mockResolvedValueOnce([...WEBHOOK_FIELDS]),
+      probeConversations: vi.fn(), getMyMedia: vi.fn(async () => []), probeMediaComments: vi.fn(), requiredWebhookFields: () => WEBHOOK_FIELDS,
+    };
+    const report = await checkAccountConnection(client, { subscribe: true });
+    expect(client.subscribeApp).not.toHaveBeenCalled();
+    expect(report.webhook.subscribedNow).toBe(false);
+    expect(report.webhook.fields).toEqual([...WEBHOOK_FIELDS]);
+    expect(report.webhook.state).toBe('ok');
+  });
+  it('keeps unreadable subscriptions in error instead of replacing them with required fields', async () => {
+    const client: any = {
+      getMe: vi.fn(async () => ({ username: 'shop' })),
+      subscribeApp: vi.fn(), getSubscribedFields: vi.fn().mockRejectedValue(new Error('unavailable')),
+      probeConversations: vi.fn(), getMyMedia: vi.fn(async () => []), probeMediaComments: vi.fn(), requiredWebhookFields: () => WEBHOOK_FIELDS,
+    };
+    const report = await checkAccountConnection(client, { subscribe: true });
+    expect(client.subscribeApp).not.toHaveBeenCalled();
+    expect(report.ok).toBe(false); expect(report.webhook.state).toBe('error');
+  });
+});

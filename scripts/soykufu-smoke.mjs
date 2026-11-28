@@ -30,7 +30,8 @@ try {
   // messages, credentials, row bodies or inferred authorisation to resume.
   const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
   console.log('Stopped state observation (not permission to send): '+JSON.stringify({
-    providerReadOk: d1.ok && data.success === true,
+    providerReadOk: d1.ok && data.success === true, providerHttpStatus: d1.status,
+    providerErrorCodes: Array.isArray(data.errors) ? data.errors.map(e=>Number.isSafeInteger(e?.code)?e.code:null).filter(n=>n!==null).slice(0,5) : [],
     paused: state?.paused === '1' ? true : state?.paused === '0' ? false : null,
     accounts: count(state?.accounts), followers: count(state?.followers), expectedAccounts,
   }));
