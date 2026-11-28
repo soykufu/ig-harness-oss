@@ -26,6 +26,14 @@ try {
   });
   const data = await d1.json();
   const state = data.result?.[0]?.results?.[0];
+  // Publish only bounded operational aggregates on failure, never provider
+  // messages, credentials, row bodies or inferred authorisation to resume.
+  const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+  console.log('Stopped state observation (not permission to send): '+JSON.stringify({
+    providerReadOk: d1.ok && data.success === true,
+    paused: state?.paused === '1' ? true : state?.paused === '0' ? false : null,
+    accounts: count(state?.accounts), followers: count(state?.followers), expectedAccounts,
+  }));
   if (!d1.ok || data.success !== true || state?.paused !== '1' || Number(state.accounts) !== expectedAccounts || Number(state.followers) !== 0) throw new Error('Stopped empty installation verification failed');
   const query=async sql=>{
     if(!/^\s*(SELECT|PRAGMA)\b/i.test(sql)||/;/.test(sql))throw Error('Read-only snapshot rejected');

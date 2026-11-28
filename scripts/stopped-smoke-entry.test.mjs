@@ -17,10 +17,12 @@ async function run(mode){const db=new DatabaseSync(':memory:');await applyMigrat
  else if(url.includes('/versions/'))result={id:'22222222-2222-4222-8222-222222222222',resources:{bindings:[{name:'DB',type:'d1',id:'e55c3b84-ea9a-48fd-a7a3-08253089d295'},{name:'IMAGES',type:'r2_bucket',bucket_name:'soykufu-ig-harness-20261119'},{name:'OUTBOUND_PREPARATION_LOCK',type:'plain_text',text:'1'}]}};
  else if(url.includes('/time_travel/bookmark?timestamp=')){bookmarks++;result={bookmark:'00000001-00000002-00004e2f-0a83ea2fceebc654de0640c422be4653'};if(bookmarks===2){if(mode==='ledger-drift')db.exec("UPDATE ig_schema_migrations SET sha256='changed' WHERE name='0041_gate_followup_operations.sql'");if(mode==='stop-drift')db.exec("UPDATE integration_settings SET value='0'");}}
  else if(url.endsWith('/managed'))result={enabled:false};else if(url.endsWith('/custom'))result={domains:[]};else throw Error('Unexpected provider request');return new Response(JSON.stringify({success:true,result}));};
- if(mode==='registered'){
+ if(mode==='registered'||mode==='unexpected-followers'||mode==='pause-off'){
   process.env.STOPPED_REGISTERED_PHASE='1';
   db.exec("INSERT INTO ig_accounts(id,ig_user_id,username,access_token,is_active,is_default,connection_type,page_id,created_at,updated_at) VALUES('test-id','17841402028638204','soykufu','enc:v1:private-fixture',1,0,'facebook_login','1632563283635095','2026-11-24T00:00:00Z','2026-11-24T00:00:00Z')");
  }
+ if(mode==='unexpected-followers')db.exec("INSERT INTO followers(id,igsid,username,account_id) VALUES(1,'fixture-igsid','PRIVATE_PERSON','test-id')");
+ if(mode==='pause-off')db.exec("UPDATE integration_settings SET value='0' WHERE key='outbound_paused'");
  const source=(await readFile(new URL('./soykufu-smoke.mjs',import.meta.url),'utf8')).replace(/^import .*;\n/gm,'');const execute=new (Object.getPrototypeOf(async function(){}).constructor)('readStoppedInstallationSnapshot','migrationLedgerFingerprint','readStoppedRuntimeSnapshot','isStoppedRuntimeReadPath','assessStoppedConnectionReadiness','process','fetch','console',source);
  try{await execute(readStoppedInstallationSnapshot,migrationLedgerFingerprint,readStoppedRuntimeSnapshot,isStoppedRuntimeReadPath,assessStoppedConnectionReadiness,process,fetch,{log:v=>output.push(v),error:v=>errors.push(v)});return{exitCode:process.exitCode,output,errors,calls,bookmarks};}finally{db.close();}}
 test('the real smoke entry makes only allowlisted reads and publishes a scoped proof without secret/reference values',async()=>{const result=await run('valid');assert.equal(result.exitCode,0);assert.equal(result.bookmarks,2);const line=result.output.find(s=>s.startsWith('Stopped preparation snapshot'));const json=JSON.parse(line.slice(line.indexOf('{')));assert.equal(json.timeTravelRecoveryProof.available,true);assert.equal(json.timeTravelRecoveryProof.sealedRoundTripVerified,true);assert.equal(json.timeTravelRecoveryProof.referencePersisted,false);assert.equal(json.backupVerified,false);assert.equal(json.deploymentAuthorized,false);const readinessLine=result.output.find(s=>s.startsWith('Stopped connection readiness'));const readiness=JSON.parse(readinessLine.slice(readinessLine.indexOf('{')));assert.equal(readiness.registrationSpec.subscribeWebhooks,false);assert.equal(readiness.registrationAuthorized,false);assert.equal(readiness.webhookActivationAuthorized,false);assert.equal(readiness.messagesAuthorized,false);assert.ok(readiness.blockers.includes('token_encryption_key_unverified'));assert.doesNotMatch(JSON.stringify(result.output),/DUMMY_OWNER|DUMMY_CLOUDFLARE|00004e2f|ciphertext/);});
@@ -34,3 +36,13 @@ test('the real registered-phase entry verifies exactly one fixed encrypted accou
  assert.doesNotMatch(JSON.stringify(r.output),/private-fixture|DUMMY_OWNER|DUMMY_CLOUDFLARE/);
 });
 
+
+for(const mode of ['unexpected-followers','pause-off'])test('state diagnostics distinguish '+mode+' without changing or exposing data',async()=>{
+ const r=await run(mode);assert.equal(r.exitCode,1);
+ const line=r.output.find(s=>s.startsWith('Stopped state observation'));
+ const state=JSON.parse(line.slice(line.indexOf('{')));
+ assert.equal(state.providerReadOk,true);assert.equal(state.accounts,1);
+ assert.equal(state.paused,mode!=='pause-off');assert.equal(state.followers,mode==='unexpected-followers'?1:0);
+ assert.doesNotMatch(JSON.stringify(r.output),/PRIVATE_PERSON|fixture-igsid|private-fixture|DUMMY/);
+ assert.ok(!r.output.some(s=>s.startsWith('Stopped preparation snapshot')));
+});
